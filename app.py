@@ -7,6 +7,7 @@ import json
 from datetime import date, datetime, timedelta
 import calendar
 import os
+from st_gsheets_connection import GSheetsConnection
 
 try:
     from streamlit_calendar import calendar as st_calendar
@@ -44,6 +45,8 @@ GACHA_COST = 50
 TASK_POINTS = 5  # タスク完了ごとのポイント（今日の予定で未使用・互換のため残す）
 TASK_TOGGLE_POINTS = 10  # チェックボックスで完了にした時 +10pt、外した時 -10pt
 
+conn = st.connection("gsheets", type=GSheetsConnection)
+
 # ページ名
 PAGE_HOME = "home"
 PAGE_STUDY = "study"
@@ -64,10 +67,12 @@ PAGE_TO_OPTION = {
     PAGE_STUDY: "📅 今日の学習", PAGE_TEST: "小テスト", PAGE_GACHA: "ガチャ",
 }
 
-# users.csv を読み込み（列が古い場合は streak / last_visit_date / recent_login_dates を追加）
+# users データを読み込み（列が古い場合は streak / last_visit_date / recent_login_dates を追加）
 @st.cache_data
 def load_users():
-    df = pd.read_csv(CSV_PATH, encoding="utf-8")
+    df = conn.read(worksheet="users", ttl=0)
+    if df is None or df.empty:
+        df = pd.DataFrame(columns=["ユーザー名", "現在ポイント", COL_LAST_LOGIN, COL_STREAK, COL_LAST_VISIT, COL_RECENT_LOGINS])
     if COL_LAST_LOGIN not in df.columns:
         df[COL_LAST_LOGIN] = ""
     if COL_STREAK not in df.columns:
@@ -76,11 +81,10 @@ def load_users():
         df[COL_LAST_VISIT] = ""
     if COL_RECENT_LOGINS not in df.columns:
         df[COL_RECENT_LOGINS] = ""
-    df.to_csv(CSV_PATH, index=False, encoding="utf-8")
     return df
 
 def save_users(df):
-    df.to_csv(CSV_PATH, index=False, encoding="utf-8")
+    conn.update(worksheet="users", data=df)
     st.cache_data.clear()
 
 def today_str():
@@ -89,58 +93,50 @@ def today_str():
 def this_month_str():
     return date.today().strftime("%Y-%m")
 
-# plans.csv を読み込み（無ければダミーデータで作成）
+# plans データを読み込み（無ければ空の DataFrame を用意）
 def load_plans():
-    if not os.path.exists(PLANS_PATH):
-        dummy = pd.DataFrame([
-            ["田中太郎", "〇〇中学合格！", "図形マスター", "図形の基礎問題を5問解く", today_str(), 0, "", "", ""],
-        ], columns=["ユーザー名", "大計画", "中計画", "小計画タスク", "日付", "完了フラグ", "video_url", "material_id", "page_range"])
-        dummy.to_csv(PLANS_PATH, index=False, encoding="utf-8")
-        return dummy
-    df = pd.read_csv(PLANS_PATH, encoding="utf-8")
-    updated = False
+    df = conn.read(worksheet="plans", ttl=0)
+    if df is None or df.empty:
+        df = pd.DataFrame(columns=["ユーザー名", "大計画", "中計画", "小計画タスク", "日付", "完了フラグ", "video_url", "material_id", "page_range"])
     for col, default in [("video_url", ""), ("material_id", ""), ("page_range", "")]:
         if col not in df.columns:
             df[col] = default
-            updated = True
-    if updated:
-        df.to_csv(PLANS_PATH, index=False, encoding="utf-8")
     return df
 
 def save_plans(df):
-    df.to_csv(PLANS_PATH, index=False, encoding="utf-8")
+    conn.update(worksheet="plans", data=df)
 
 
 def load_content():
-    if not os.path.exists(CONTENT_PATH):
-        pd.DataFrame(columns=["教科", "種別", "タイトル", "URL"]).to_csv(CONTENT_PATH, index=False, encoding="utf-8")
-    return pd.read_csv(CONTENT_PATH, encoding="utf-8")
+    df = conn.read(worksheet="content", ttl=0)
+    if df is None or df.empty:
+        df = pd.DataFrame(columns=["教科", "種別", "タイトル", "URL"])
+    return df
 
 def save_content(df):
-    df.to_csv(CONTENT_PATH, index=False, encoding="utf-8")
+    conn.update(worksheet="content", data=df)
 
 def load_news():
-    if not os.path.exists(NEWS_PATH):
-        pd.DataFrame(columns=["メッセージ", "作成日", "target_user"]).to_csv(NEWS_PATH, index=False, encoding="utf-8")
-        return pd.read_csv(NEWS_PATH, encoding="utf-8")
-    df = pd.read_csv(NEWS_PATH, encoding="utf-8")
+    df = conn.read(worksheet="news", ttl=0)
+    if df is None or df.empty:
+        df = pd.DataFrame(columns=["メッセージ", "作成日", "target_user"])
     if "target_user" not in df.columns:
         df["target_user"] = "全員"
-        df.to_csv(NEWS_PATH, index=False, encoding="utf-8")
     return df
 
 def save_news(df):
-    df.to_csv(NEWS_PATH, index=False, encoding="utf-8")
+    conn.update(worksheet="news", data=df)
 
 
 def load_materials():
-    if not os.path.exists(MATERIALS_PATH):
-        pd.DataFrame(columns=["ID", "教科", "教材名", "出版社", "対象学年", "目次データ"]).to_csv(MATERIALS_PATH, index=False, encoding="utf-8")
-    return pd.read_csv(MATERIALS_PATH, encoding="utf-8")
+    df = conn.read(worksheet="materials", ttl=0)
+    if df is None or df.empty:
+        df = pd.DataFrame(columns=["ID", "教科", "教材名", "出版社", "対象学年", "目次データ"])
+    return df
 
 
 def save_materials(df):
-    df.to_csv(MATERIALS_PATH, index=False, encoding="utf-8")
+    conn.update(worksheet="materials", data=df)
 
 
 # ---------- 計画用：標準ダイアログ（@st.dialog） ----------
