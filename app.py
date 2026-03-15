@@ -7,7 +7,12 @@ import json
 from datetime import date, datetime, timedelta
 import calendar
 import os
-from st_gsheets_connection import GSheetsConnection
+import gspread
+from google.oauth2.service_account import Credentials
+
+# ========== ▼▼▼ ここだけ書き換えてください ▼▼▼ ==========
+SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1tP0P_VqTExvmNp-CqKMKf_6GPmr35BDCDjOqL_5NPDY/edit?gid=1236206020#gid=1236206020"
+# ========== ▲▲▲ ここだけ書き換えてください ▲▲▲ ==========
 
 try:
     from streamlit_calendar import calendar as st_calendar
@@ -35,17 +40,15 @@ CONTENT_PATH = "content.csv"
 NEWS_PATH = "news.csv"
 MATERIALS_PATH = "materials.csv"
 ADMIN_OPTION = "👨‍🏫 管理者"
-ADMIN_PASSWORD = "admin"  # 本番では環境変数などに変更を推奨
+ADMIN_PASSWORD = "admin"
 
-COL_LAST_LOGIN = "last_login_date"  # 気分チェック（ボーナス）済みの日付
-COL_LAST_VISIT = "last_visit_date"  # ストリーク用・最終訪問日
+COL_LAST_LOGIN = "last_login_date"
+COL_LAST_VISIT = "last_visit_date"
 COL_STREAK = "streak"
-COL_RECENT_LOGINS = "recent_login_dates"  # 直近7日分 "YYYY-MM-DD,..."
+COL_RECENT_LOGINS = "recent_login_dates"
 GACHA_COST = 50
-TASK_POINTS = 5  # タスク完了ごとのポイント（今日の予定で未使用・互換のため残す）
-TASK_TOGGLE_POINTS = 10  # チェックボックスで完了にした時 +10pt、外した時 -10pt
-
-conn = st.connection("gsheets", type=GSheetsConnection)
+TASK_POINTS = 5
+TASK_TOGGLE_POINTS = 10
 
 # ページ名
 PAGE_HOME = "home"
@@ -55,7 +58,6 @@ PAGE_GACHA = "gacha"
 PAGE_SCHEDULE = "schedule"
 PAGE_PLAN = "plan"
 
-# ナビゲーション用：メニュー表示名とページ定数の対応
 NAV_OPTIONS = ["ホーム", "📅 今日の学習", "計画確認", "小テスト", "ガチャ"]
 NAV_ICONS = ["house", "journal-check", "map", "pencil-square", "gift"]
 OPTION_TO_PAGE = {
@@ -67,10 +69,44 @@ PAGE_TO_OPTION = {
     PAGE_STUDY: "📅 今日の学習", PAGE_TEST: "小テスト", PAGE_GACHA: "ガチャ",
 }
 
-# users データを読み込み（列が古い場合は streak / last_visit_date / recent_login_dates を追加）
+YOUTUBE_EMBED_URL = "https://www.youtube.com/embed/dQw4w9WgXcQ"
+GOOGLE_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScVVn3qGYn48oxTzGLOE0iPzFqYjvQnLexample/viewform"
+
+# ==========================================================
+# ▼ gspread 接続ヘルパー（st-gsheets-connection の代替）
+# ==========================================================
+@st.cache_resource
+def get_gspread_client():
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=scopes,
+    )
+    return gspread.authorize(creds)
+
+def read_worksheet(worksheet_name: str) -> pd.DataFrame:
+    client = get_gspread_client()
+    sheet = client.open_by_url(SPREADSHEET_URL)
+    ws = sheet.worksheet(worksheet_name)
+    data = ws.get_all_records()
+    return pd.DataFrame(data) if data else pd.DataFrame()
+
+def write_worksheet(worksheet_name: str, df: pd.DataFrame):
+    client = get_gspread_client()
+    sheet = client.open_by_url(SPREADSHEET_URL)
+    ws = sheet.worksheet(worksheet_name)
+    ws.clear()
+    ws.update([df.columns.values.tolist()] + df.fillna("").values.tolist())
+
+# ==========================================================
+# ▼ データ読み書き関数
+# ==========================================================
 @st.cache_data
 def load_users():
-    df = conn.read(worksheet="users", ttl=0)
+    df = read_worksheet("users")
     if df is None or df.empty:
         df = pd.DataFrame(columns=["ユーザー名", "現在ポイント", COL_LAST_LOGIN, COL_STREAK, COL_LAST_VISIT, COL_RECENT_LOGINS])
     if COL_LAST_LOGIN not in df.columns:
@@ -84,7 +120,7 @@ def load_users():
     return df
 
 def save_users(df):
-    conn.update(worksheet="users", data=df)
+    write_worksheet("users", df)
     st.cache_data.clear()
 
 def today_str():
@@ -93,9 +129,8 @@ def today_str():
 def this_month_str():
     return date.today().strftime("%Y-%m")
 
-# plans データを読み込み（無ければ空の DataFrame を用意）
 def load_plans():
-    df = conn.read(worksheet="plans", ttl=0)
+    df = read_worksheet("plans")
     if df is None or df.empty:
         df = pd.DataFrame(columns=["ユーザー名", "大計画", "中計画", "小計画タスク", "日付", "完了フラグ", "video_url", "material_id", "page_range"])
     for col, default in [("video_url", ""), ("material_id", ""), ("page_range", "")]:
@@ -104,20 +139,19 @@ def load_plans():
     return df
 
 def save_plans(df):
-    conn.update(worksheet="plans", data=df)
-
+    write_worksheet("plans", df)
 
 def load_content():
-    df = conn.read(worksheet="content", ttl=0)
+    df = read_worksheet("content")
     if df is None or df.empty:
         df = pd.DataFrame(columns=["教科", "種別", "タイトル", "URL"])
     return df
 
 def save_content(df):
-    conn.update(worksheet="content", data=df)
+    write_worksheet("content", df)
 
 def load_news():
-    df = conn.read(worksheet="news", ttl=0)
+    df = read_worksheet("news")
     if df is None or df.empty:
         df = pd.DataFrame(columns=["メッセージ", "作成日", "target_user"])
     if "target_user" not in df.columns:
@@ -125,21 +159,20 @@ def load_news():
     return df
 
 def save_news(df):
-    conn.update(worksheet="news", data=df)
-
+    write_worksheet("news", df)
 
 def load_materials():
-    df = conn.read(worksheet="materials", ttl=0)
+    df = read_worksheet("materials")
     if df is None or df.empty:
         df = pd.DataFrame(columns=["ID", "教科", "教材名", "出版社", "対象学年", "目次データ"])
     return df
 
-
 def save_materials(df):
-    conn.update(worksheet="materials", data=df)
+    write_worksheet("materials", df)
 
-
-# ---------- 計画用：標準ダイアログ（@st.dialog） ----------
+# ==========================================================
+# ▼ ダイアログ
+# ==========================================================
 @st.dialog("タスクの編集")
 def edit_task_dialog(plan_idx):
     df = load_plans()
@@ -172,7 +205,6 @@ def edit_task_dialog(plan_idx):
         if st.button("キャンセル", key="dialog_edit_cancel"):
             st.rerun()
 
-
 @st.dialog("新規タスク追加")
 def add_task_dialog(mid_plan, selected_user):
     df = load_plans()
@@ -202,33 +234,30 @@ def add_task_dialog(mid_plan, selected_user):
         if st.button("キャンセル", key="dialog_add_cancel"):
             st.rerun()
 
-
-# 例として使用するURL（実際の運用では差し替えてください）
-YOUTUBE_EMBED_URL = "https://www.youtube.com/embed/dQw4w9WgXcQ"
-GOOGLE_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScVVn3qGYn48oxTzGLOE0iPzFqYjvQnLexample/viewform"
-
-# ---------- セッション状態：現在のページ ----------
+# ==========================================================
+# ▼ セッション状態初期化
+# ==========================================================
 if "page" not in st.session_state:
     st.session_state.page = PAGE_HOME
 if "toast_shown" not in st.session_state:
     st.session_state.toast_shown = False
 
-# ---------- 共通：ユーザーデータ読み込み ----------
+# ==========================================================
+# ▼ 共通データ読み込み
+# ==========================================================
 df = load_users()
 df_plans = load_plans()
 
-# サイドバー：ユーザー選択（管理者オプション付き）
+# サイドバー
 st.sidebar.title("👤 ユーザー選択")
 st.sidebar.markdown("---")
 user_names = df["ユーザー名"].tolist()
 options = user_names + [ADMIN_OPTION]
-selected_user = st.sidebar.selectbox(
-    "名前を選んでください",
-    options=options,
-    index=0
-)
+selected_user = st.sidebar.selectbox("名前を選んでください", options=options, index=0)
 
-# 管理者選択時：パスワード入力と管理画面へ
+# ==========================================================
+# ▼ 管理者画面
+# ==========================================================
 if selected_user == ADMIN_OPTION:
     if "admin_ok" not in st.session_state:
         st.session_state.admin_ok = False
@@ -239,7 +268,7 @@ if selected_user == ADMIN_OPTION:
     if not st.session_state.admin_ok:
         st.info("👨‍🏫 管理者を選択しました。パスワードを入力してログインしてください。")
         st.stop()
-    # 以下：管理画面を表示して終了
+
     st.title("👨‍🏫 管理者画面")
     tab_dash, tab_content, tab_materials, tab_news = st.tabs(["📊 生徒の進捗一覧", "📎 教材管理", "📚 教材マスター", "📢 お知らせ管理"])
 
@@ -327,7 +356,6 @@ if selected_user == ADMIN_OPTION:
         st.subheader("📚 教材マスター登録")
         if "materials_toc_draft" not in st.session_state:
             st.session_state.materials_toc_draft = []
-        # 基本情報
         st.markdown("**教材の基本情報**")
         col_m1, col_m2 = st.columns(2)
         with col_m1:
@@ -375,7 +403,7 @@ if selected_user == ADMIN_OPTION:
                     st.success("教材を保存しました。")
                     st.rerun()
         else:
-            st.caption("単元名とページ範囲を入力して「追加」を押すと、ここに目次が溜まります。最後に「教材を保存」で materials.csv に書き込みます。")
+            st.caption("単元名とページ範囲を入力して「追加」を押すと、ここに目次が溜まります。最後に「教材を保存」で保存します。")
         st.markdown("---")
         st.subheader("登録済み教材一覧")
         df_m = load_materials()
@@ -431,14 +459,15 @@ if selected_user == ADMIN_OPTION:
 
     st.stop()
 
-# 通常の生徒として続行（管理者でない）
+# ==========================================================
+# ▼ 生徒画面（共通）
+# ==========================================================
 user_row = df[df["ユーザー名"] == selected_user]
 current_points = int(user_row["現在ポイント"].values[0])
 last_login = str(user_row[COL_LAST_LOGIN].values[0]) if pd.notna(user_row[COL_LAST_LOGIN].values[0]) else ""
 today = today_str()
 this_month = this_month_str()
 
-# ストリーク用（ホームで更新するためここでは読み取りのみ）
 def _get_val(row, col, default=""):
     v = row[col].values[0]
     return v if pd.notna(v) and str(v).strip() else default
@@ -447,7 +476,7 @@ streak = int(user_row[COL_STREAK].values[0]) if COL_STREAK in df.columns and pd.
 last_visit = _get_val(user_row, COL_LAST_VISIT, "") if COL_LAST_VISIT in df.columns else ""
 recent_login_dates = _get_val(user_row, COL_RECENT_LOGINS, "") if COL_RECENT_LOGINS in df.columns else ""
 
-# ---------- 水平メニューバー（streamlit-option-menu） ----------
+# ---------- 水平メニューバー ----------
 if HAS_OPTION_MENU:
     current_option = PAGE_TO_OPTION.get(st.session_state.page, "ホーム")
     default_index = NAV_OPTIONS.index(current_option) if current_option in NAV_OPTIONS else 0
@@ -468,7 +497,6 @@ if HAS_OPTION_MENU:
         st.session_state.page = OPTION_TO_PAGE[selected]
         st.rerun()
 else:
-    # ライブラリ未導入時：シンプルなボタンで遷移
     cur_opt = PAGE_TO_OPTION.get(st.session_state.page, "ホーム")
     idx = NAV_OPTIONS.index(cur_opt) if cur_opt in NAV_OPTIONS else 0
     sel = st.radio("メニュー", NAV_OPTIONS, index=idx, horizontal=True, label_visibility="collapsed")
@@ -476,7 +504,7 @@ else:
         st.session_state.page = OPTION_TO_PAGE[sel]
         st.rerun()
 
-# ---------- 共通：画面右上に小さく挨拶・ポイント表示 ----------
+# ---------- CSS / ヘッダー ----------
 st.markdown("""
 <style>
     .header-right { text-align: right; font-size: 1rem; color: #555; margin-bottom: 0.5rem; }
@@ -491,6 +519,10 @@ st.markdown("""
     .point-shortage { color: #d32f2f !important; font-size: 1.8rem !important; font-weight: bold !important; }
     .plan-big { font-size: 2rem; font-weight: bold; color: #1f77b4; margin: 1rem 0; padding: 1rem; background: #e3f2fd; border-radius: 12px; }
     .plan-mid { font-size: 1.5rem; font-weight: bold; color: #2e7d32; margin: 0.8rem 0; padding: 0.8rem; background: #e8f5e9; border-radius: 10px; }
+    .streak-cell { text-align: center; padding: 0.5rem; border-radius: 12px; font-size: 1rem; }
+    .streak-cell.achieved { background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); color: #fff; font-size: 1.8rem; font-weight: bold; box-shadow: 0 4px 12px rgba(245,124,0,0.4); }
+    .streak-cell.today-empty { background: #fff8e1; color: #f9a825; font-size: 1.2rem; }
+    .streak-cell.empty { color: #9e9e9e; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -498,12 +530,10 @@ _, header_col = st.columns([3, 1])
 with header_col:
     st.markdown(f'<p class="header-right">こんにちは、{selected_user}さん！　現在のポイント：<strong>{current_points}pt</strong></p>', unsafe_allow_html=True)
 
-# ホーム画面のときだけトーストで挨拶（1回だけ）
 if st.session_state.page == PAGE_HOME and not st.session_state.toast_shown:
     st.toast(f"こんにちは、{selected_user}さん！")
     st.session_state.toast_shown = True
 
-# ---------- ホームに戻るボタン（予定・計画などナビにないページ用） ----------
 def render_back_home():
     if st.button("🏠 ホームに戻る", use_container_width=False):
         st.session_state.page = PAGE_HOME
@@ -513,9 +543,10 @@ if st.session_state.page != PAGE_HOME:
     render_back_home()
     st.markdown("---")
 
-# ========== ホーム画面 ==========
+# ==========================================================
+# ▼ ホーム画面
+# ==========================================================
 if st.session_state.page == PAGE_HOME:
-    # 訪問日更新（ストリーク用）：今日まだ訪問していなければ更新
     yesterday = (date.today() - timedelta(days=1)).isoformat()
     if last_visit != today:
         new_streak = (streak + 1) if (last_visit == yesterday) else 1
@@ -532,7 +563,6 @@ if st.session_state.page == PAGE_HOME:
 
     st.markdown("## ホーム")
 
-    # お知らせ（news.csv）：自分宛て or 全員宛てのみ表示・目立つ表示
     df_news = load_news()
     if "target_user" not in df_news.columns:
         df_news["target_user"] = "全員"
@@ -544,51 +574,30 @@ if st.session_state.page == PAGE_HOME:
                 st.warning("⚠️ " + row.get("メッセージ", ""), icon="📢")
             st.markdown("---")
 
-    # 連続記録（Streak）の可視化（ワクワクヒートマップ）
-    st.markdown(
-        f'<p style="font-size: 2rem; font-weight: bold; color: #e65100;">🔥 連続 {streak}日目！</p>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(f'<p style="font-size: 2rem; font-weight: bold; color: #e65100;">🔥 連続 {streak}日目！</p>', unsafe_allow_html=True)
     recent_set = set(d.strip() for d in recent_login_dates.split(",") if d.strip())
     today_iso = date.today().isoformat()
     weekdays_ja = ["月", "火", "水", "木", "金", "土", "日"]
-    # 直近7日分の日付・達成有無・曜日
     day_infos = []
     for i in range(6, -1, -1):
         d = (date.today() - timedelta(days=i)).isoformat()
         is_today = d == today_iso
         achieved = d in recent_set
         if achieved:
-            icon = "🔥"
-            label = "今日" if is_today else d[5:].replace("-", "/")
-            css_class = "streak-cell achieved"
+            icon = "🔥"; label = "今日" if is_today else d[5:].replace("-", "/"); css_class = "streak-cell achieved"
         elif is_today:
-            icon = "✨"
-            label = "今日"
-            css_class = "streak-cell today-empty"
+            icon = "✨"; label = "今日"; css_class = "streak-cell today-empty"
         else:
-            icon = "⚪"
-            label = d[5:].replace("-", "/")
-            css_class = "streak-cell empty"
+            icon = "⚪"; label = d[5:].replace("-", "/"); css_class = "streak-cell empty"
         wd = date.fromisoformat(d).weekday()
         day_infos.append({"date": d, "icon": icon, "label": label, "css": css_class, "weekday": weekdays_ja[wd]})
-    st.markdown("""
-    <style>
-    .streak-cell { text-align: center; padding: 0.5rem; border-radius: 12px; font-size: 1rem; }
-    .streak-cell.achieved { background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); color: #fff; font-size: 1.8rem; font-weight: bold; box-shadow: 0 4px 12px rgba(245,124,0,0.4); }
-    .streak-cell.today-empty { background: #fff8e1; color: #f9a825; font-size: 1.2rem; }
-    .streak-cell.empty { color: #9e9e9e; }
-    </style>
-    """, unsafe_allow_html=True)
+
     st.markdown("**直近7日間**")
     cols = st.columns(7)
     for idx, col in enumerate(cols):
         with col:
             info = day_infos[idx]
-            st.markdown(
-                f'<div class="{info["css"]}"><span style="display:block; font-size: inherit;">{info["icon"]}</span><span style="display:block; font-size: 0.85rem; margin-top: 0.2rem;">{info["label"]}</span></div>',
-                unsafe_allow_html=True,
-            )
+            st.markdown(f'<div class="{info["css"]}"><span style="display:block; font-size: inherit;">{info["icon"]}</span><span style="display:block; font-size: 0.85rem; margin-top: 0.2rem;">{info["label"]}</span></div>', unsafe_allow_html=True)
     cols_w = st.columns(7)
     for idx, col in enumerate(cols_w):
         with col:
@@ -596,7 +605,6 @@ if st.session_state.page == PAGE_HOME:
     st.caption("🔥＝達成済み　⚪＝未達成　✨＝今日（まだならログインして炎を灯そう！）")
     st.markdown("")
 
-    # 今日の気分チェック（last_login_date が今日なら表示しない／登録済みのみ）
     if last_login == today:
         st.markdown("### 今日の気分　登録済み")
         st.caption("今日の気分チェックは完了しています。")
@@ -612,7 +620,6 @@ if st.session_state.page == PAGE_HOME:
         with c3:
             btn_nemui = st.button("眠い...", use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
-
         bonus_gotten = False
         if btn_genki or btn_futsuu or btn_nemui:
             current_points += 10
@@ -623,11 +630,12 @@ if st.session_state.page == PAGE_HOME:
         if bonus_gotten:
             st.success("🎉 ログインボーナスゲット！")
 
-# ========== 今日の学習（タスク一覧＆実行） ==========
+# ==========================================================
+# ▼ 今日の学習
+# ==========================================================
 elif st.session_state.page == PAGE_SCHEDULE:
     st.markdown("## 📅 今日の学習")
     st.markdown("")
-
     df_plans = load_plans()
     df_plans["日付"] = df_plans["日付"].astype(str).str[:10]
     today_plans = df_plans[(df_plans["ユーザー名"] == selected_user) & (df_plans["日付"] == today)]
@@ -637,7 +645,7 @@ elif st.session_state.page == PAGE_SCHEDULE:
         m = re.match(r"^\[(.*?)\]", s)
         return m.group(1).strip() if m else s
 
-    df_materials = load_materials() if os.path.exists(MATERIALS_PATH) else pd.DataFrame()
+    df_materials = load_materials()
 
     if today_plans.empty:
         st.info("今日の学習タスクはありません。")
@@ -648,9 +656,7 @@ elif st.session_state.page == PAGE_SCHEDULE:
             subject = subject_from_mid(row.get("中計画", ""))
             task_name = str(row.get("小計画タスク", ""))
             header_label = f"{status_icon} {subject} : {task_name}"
-
             with st.expander(header_label, expanded=not done):
-                # 教材情報（material_id があれば）
                 mat_id = row.get("material_id")
                 if pd.notna(mat_id) and str(mat_id).strip() and len(df_materials):
                     try:
@@ -665,11 +671,9 @@ elif st.session_state.page == PAGE_SCHEDULE:
                                 st.markdown(f"📖 **使用教材:** {mat_name}")
                     except (ValueError, TypeError):
                         pass
-                # 動画（video_url があれば）
                 video_url = row.get("video_url")
                 if pd.notna(video_url) and str(video_url).strip():
                     st.video(str(video_url).strip())
-                # ストップウォッチ（開始/終了記録・任意）
                 if f"task_start_{idx}" not in st.session_state:
                     st.session_state[f"task_start_{idx}"] = None
                 col_sw1, col_sw2, _ = st.columns([1, 1, 2])
@@ -683,7 +687,6 @@ elif st.session_state.page == PAGE_SCHEDULE:
                         st.rerun()
                 if st.session_state.get(f"task_start_{idx}"):
                     st.caption(f"開始: {st.session_state[f'task_start_{idx}']}")
-                # 完了アクション
                 if not done:
                     if st.button("✅ 完了！", type="primary", key=f"task_done_{idx}"):
                         df_plans = load_plans()
@@ -699,17 +702,17 @@ elif st.session_state.page == PAGE_SCHEDULE:
                 else:
                     st.success("このタスクは完了しています。")
 
-# ========== 計画確認ページ ==========
+# ==========================================================
+# ▼ 計画確認ページ
+# ==========================================================
 elif st.session_state.page == PAGE_PLAN:
     st.markdown("## 🗺️ 計画確認")
     st.markdown("")
-
     df_plans = load_plans()
     df_plans["日付"] = df_plans["日付"].astype(str).str[:10]
     user_plans = df_plans[df_plans["ユーザー名"] == selected_user].copy()
     month_plans = user_plans[user_plans["日付"].str.startswith(this_month, na=False)].copy()
 
-    # カレンダー用イベント（ユーザーの全タスクを表示）
     calendar_events = []
     for idx, row in user_plans.iterrows():
         done = int(row["完了フラグ"]) == 1
@@ -731,180 +734,91 @@ elif st.session_state.page == PAGE_PLAN:
         st.info("計画データがありません。")
     else:
         big_plan = user_plans["大計画"].iloc[0]
-        # 中計画から [科目] 目標 形式をパース
+
         def parse_mid(mid):
             s = str(mid).strip()
             m = re.match(r"^\[(.*?)\]\s*(.*)$", s)
             if m:
                 return m.group(1).strip(), m.group(2).strip()
-            return s, s
+            return s, ""
 
-        # 存在する月を抽出（無ければ 2026年3〜6月を固定）
-        month_list = sorted(user_plans["日付"].astype(str).str[:7].unique().tolist())
-        if not month_list:
-            month_list = ["2026-03", "2026-04", "2026-05", "2026-06"]
-        SUBJECTS = ["国語", "算数", "理科", "社会"]
+        st.markdown(f'<div class="plan-big">🎯 大計画：{big_plan}</div>', unsafe_allow_html=True)
 
-        with st.expander("🎯 目標を確認・編集する（クリックで開閉）", expanded=False):
-            new_big = st.text_input("大計画", value=str(big_plan), key="plan_input_big")
-            st.markdown("**月ごと・科目ごとの目標**")
-            tab_labels = [f"{m[:4]}年{int(m[5:7])}月" for m in month_list]
-            month_tabs = st.tabs(tab_labels)
+        mid_plans = user_plans["中計画"].unique()
+        for mid in mid_plans:
+            subject, goal = parse_mid(mid)
+            mid_tasks = user_plans[user_plans["中計画"] == mid]
+            total = len(mid_tasks)
+            done_count = int((mid_tasks["完了フラグ"].astype(int) == 1).sum())
+            pct = int(done_count / total * 100) if total > 0 else 0
+            st.markdown(f'<div class="plan-mid">📚 [{subject}] {goal}　{done_count}/{total}件完了（{pct}%）</div>', unsafe_allow_html=True)
+            st.progress(pct / 100)
+            with st.expander(f"タスク一覧（{subject}）", expanded=False):
+                for tidx, trow in mid_tasks.iterrows():
+                    t_done = int(trow["完了フラグ"]) == 1
+                    t_icon = "✅" if t_done else "⬜"
+                    col1, col2 = st.columns([4, 1])
+                    with col1:
+                        st.markdown(f"{t_icon} {trow['小計画タスク']}　（{trow['日付']}）")
+                    with col2:
+                        if st.button("編集", key=f"plan_edit_{tidx}"):
+                            edit_task_dialog(tidx)
+                if st.button(f"➕ タスク追加（{subject}）", key=f"add_task_{mid}"):
+                    add_task_dialog(mid, selected_user)
 
-            for i, month_str in enumerate(month_list):
-                with month_tabs[i]:
-                    month_data = user_plans[user_plans["日付"].astype(str).str[:7] == month_str]
-                    subject_goals = {}
-                    for mid in month_data["中計画"].dropna().unique():
-                        subj, goal = parse_mid(mid)
-                        if subj and subj not in subject_goals:
-                            subject_goals[subj] = goal
-                    new_goals = {}
-                    for subj in SUBJECTS:
-                        new_goals[subj] = st.text_input(
-                            f"{subj}の目標",
-                            value=subject_goals.get(subj, ""),
-                            key=f"plan_goal_{month_str}_{subj}",
-                        )
-                    month_label = f"{int(month_str[5:7])}月"
-                    if st.button(f"💾 {month_label}の目標を保存", key=f"plan_save_{month_str}"):
-                        df = load_plans()
-                        df["日付"] = df["日付"].astype(str).str[:10]
-                        df.loc[df["ユーザー名"] == selected_user, "大計画"] = new_big
-                        for subj in SUBJECTS:
-                            new_goal = str(new_goals.get(subj, "")).strip()
-                            mask = (
-                                (df["ユーザー名"] == selected_user)
-                                & (df["日付"].str[:7] == month_str)
-                                & (df["中計画"].astype(str).str.strip().str.startswith(f"[{subj}]"))
-                            )
-                            df.loc[mask, "中計画"] = f"[{subj}] {new_goal}"
-                        save_plans(df)
-                        st.success(f"{month_label}の目標を保存しました。")
-                        st.rerun()
+        # カレンダー表示
+        if HAS_STREAMLIT_CALENDAR and calendar_events:
+            st.markdown("### 📅 学習カレンダー")
+            cal_options = {
+                "initialView": "dayGridMonth",
+                "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth,listWeek"},
+                "locale": "ja",
+                "height": 500,
+            }
+            st_calendar(events=calendar_events, options=cal_options)
 
-        total = len(month_plans)
-        done_count = (month_plans["完了フラグ"].astype(int) == 1).sum() if total else 0
-        st.progress(done_count / total if total else 0)
-        st.caption(f"達成状況：{int(done_count)} / {int(total)} タスク")
-        st.markdown("")
-
-        # タブ：カレンダー / タスクリスト（タブレットで見やすく）
-        tab_cal, tab_list = st.tabs(["📅 カレンダー", "📝 タスクリスト"])
-
-        with tab_cal:
-            st.markdown("#### 📆 カレンダー（タスクをクリックで編集）")
-            if HAS_STREAMLIT_CALENDAR:
-                calendar_options = {
-                    "editable": False,
-                    "selectable": True,
-                    "initialView": "dayGridMonth",
-                    "headerToolbar": {"left": "today prev,next", "center": "title", "right": ""},
-                    "initialDate": this_month + "-01",
-                }
-                cal_result = st_calendar(
-                    events=calendar_events,
-                    options=calendar_options,
-                    key="plan-calendar",
-                )
-                if cal_result and cal_result.get("callback") == "eventClick":
-                    ev = cal_result.get("eventClick", {}).get("event", {})
-                    ext = ev.get("extendedProps") or {}
-                    plan_idx = ext.get("plan_idx")
-                    if plan_idx is not None:
-                        edit_task_dialog(plan_idx)
-            else:
-                year, month = date.today().year, date.today().month
-                days_in_month = calendar.monthrange(year, month)[1]
-                plan_dates = month_plans["日付"].astype(str).str[:10]
-                count_by_date = plan_dates.value_counts()
-                rows = []
-                for d in range(1, days_in_month + 1):
-                    d_str = f"{year}-{month:02d}-{d:02d}"
-                    wd = date(year, month, d).weekday()
-                    weekday_ja = ["月", "火", "水", "木", "金", "土", "日"][wd]
-                    n = int(count_by_date.get(d_str, 0))
-                    rows.append({"日付": d_str, "曜日": weekday_ja, "タスク数": n})
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-                if not HAS_STREAMLIT_CALENDAR:
-                    st.caption("※ streamlit-calendar をインストールすると月表示カレンダーが使えます。")
-
-        with tab_list:
-            st.markdown("#### 📝 今月のタスク（科目ごと）")
-            if month_plans.empty:
-                st.caption("今月のタスクはありません。")
-            else:
-                mid_groups = month_plans.groupby("中計画", sort=False)
-                for mid_plan, group in mid_groups:
-                    tasks_sorted = group.sort_values("日付")
-                    label = f"{mid_plan}（{len(tasks_sorted)}件）"
-                    with st.expander(label, expanded=True):
-                        for idx, row in tasks_sorted.iterrows():
-                            done = int(row["完了フラグ"]) == 1
-                            c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
-                            with c1:
-                                checked = st.checkbox(
-                                    row["小計画タスク"],
-                                    value=done,
-                                    key=f"planlist_cb_{idx}",
-                                )
-                                if checked != done:
-                                    df_plans.loc[idx, "完了フラグ"] = 1 if checked else 0
-                                    delta = TASK_TOGGLE_POINTS if checked else -TASK_TOGGLE_POINTS
-                                    new_pt = max(0, current_points + delta)
-                                    df.loc[df["ユーザー名"] == selected_user, "現在ポイント"] = new_pt
-                                    save_plans(df_plans)
-                                    save_users(df)
-                                    st.rerun()
-                            with c2:
-                                st.caption(row["日付"])
-                            with c3:
-                                if st.button("📅 日付変更", key=f"chdate_{idx}"):
-                                    edit_task_dialog(idx)
-                        if st.button("➕ 新しいタスクを追加", key=f"add_{hash(mid_plan) % 10**8}"):
-                            add_task_dialog(mid_plan, selected_user)
-
-# ========== 勉強画面 ==========
-# ========== 小テスト画面 ==========
+# ==========================================================
+# ▼ 小テスト
+# ==========================================================
 elif st.session_state.page == PAGE_TEST:
-    st.markdown("## ✍️ 小テスト")
-    st.markdown("")
-    st.markdown("以下のボタンから小テストを開いてください。")
-    st.markdown("")
-    st.markdown(
-        f'<a href="{GOOGLE_FORM_URL}" target="_blank" rel="noopener noreferrer" class="test-link-card">✍️ 小テストを開く</a>',
-        unsafe_allow_html=True
-    )
+    st.markdown("## ✏️ 小テスト")
+    df_c = load_content()
+    test_contents = df_c[df_c["種別"] == "小テスト"] if len(df_c) else pd.DataFrame()
+    if test_contents.empty:
+        st.info("小テストはまだ登録されていません。")
+    else:
+        for _, row in test_contents.iterrows():
+            subject = row.get("教科", "")
+            title = row.get("タイトル", "")
+            url = row.get("URL", "")
+            if url:
+                st.markdown(f'<a href="{url}" target="_blank" class="test-link-card">📝 {subject}：{title}</a>', unsafe_allow_html=True)
 
-# ========== ガチャ画面 ==========
+# ==========================================================
+# ▼ ガチャ
+# ==========================================================
 elif st.session_state.page == PAGE_GACHA:
-    st.markdown("## 🎁 お楽しみガチャ")
-    st.markdown("")
-    st.markdown(f"現在のポイント：**{current_points}pt**（1回 50pt）")
+    st.markdown("## 🎰 ガチャ")
+    st.markdown(f"現在のポイント：**{current_points}pt**　（ガチャ1回：{GACHA_COST}pt）")
     st.markdown("")
 
-    btn_gacha = st.button("ガチャを引く（50pt消費）", use_container_width=True, type="primary")
+    GACHA_TABLE = [
+        {"rank": "★★★ ウルトラレア", "label": "🌟 ウルトラレア！特別称号ゲット！", "css": "gacha-result-urare", "weight": 5},
+        {"rank": "★★ スーパーレア", "label": "⭐ スーパーレア！すごい！", "css": "gacha-result-super", "weight": 20},
+        {"rank": "★ ノーマル", "label": "✨ ノーマル！次こそレアを狙え！", "css": "gacha-result-normal", "weight": 75},
+    ]
 
-    if btn_gacha:
-        if current_points < GACHA_COST:
-            st.markdown('<p class="point-shortage">ポイントが足りないよ！</p>', unsafe_allow_html=True)
-        else:
-            current_points -= GACHA_COST
-            df.loc[df["ユーザー名"] == selected_user, "現在ポイント"] = current_points
+    if current_points < GACHA_COST:
+        st.markdown(f'<p class="point-shortage">ポイントが足りません！あと{GACHA_COST - current_points}pt貯めよう！</p>', unsafe_allow_html=True)
+    else:
+        if st.button("🎰 ガチャを引く！", type="primary", use_container_width=True):
+            weights = [g["weight"] for g in GACHA_TABLE]
+            result = random.choices(GACHA_TABLE, weights=weights, k=1)[0]
+            new_pt = max(0, current_points - GACHA_COST)
+            df = load_users()
+            df.loc[df["ユーザー名"] == selected_user, "現在ポイント"] = new_pt
             save_users(df)
-
-            r = random.random()
-            if r < 0.05:
-                prize_text = "【激レア】先生とのお喋り券チケット！🎉"
-                result_class = "gacha-result-urare"
-            elif r < 0.20:
-                prize_text = "【スーパーレア】宿題1回パス券！✨"
-                result_class = "gacha-result-super"
-            else:
-                prize_text = "【ノーマル】すごい！明日も頑張ろう！👍"
-                result_class = "gacha-result-normal"
-
-            st.markdown(
-                f'<div class="gacha-result-box {result_class}">{prize_text}</div>',
-                unsafe_allow_html=True
-            )
+            st.markdown(f'<div class="gacha-result-box {result["css"]}">{result["label"]}</div>', unsafe_allow_html=True)
+            if result["rank"] == "★★★ ウルトラレア":
+                st.balloons()
+            st.markdown(f"残りポイント：**{new_pt}pt**")
