@@ -788,36 +788,39 @@ elif st.session_state.page == PAGE_PLAN:
             st.markdown(f'<div class="plan-mid">📚 [{subject}] {goal}　{done_count}/{total}件完了（{pct}%）</div>', unsafe_allow_html=True)
             st.progress(pct / 100)
             with st.expander(f"タスク一覧（{subject}）", expanded=False):
+                chk_changes = {}
                 for tidx, trow in mid_tasks.iterrows():
                     t_done = int(trow["完了フラグ"]) == 1
                     col1, col2 = st.columns([4, 1])
                     with col1:
-                        # トグル式チェックボックス
                         new_done = st.checkbox(
                             f"{trow['小計画タスク']}　（{trow['日付']}）",
                             value=t_done,
                             key=f"plan_chk_{tidx}"
                         )
-                        # 状態が変わったらポイント更新
                         if new_done != t_done:
-                            df_plans = load_plans()
-                            df_plans["日付"] = df_plans["日付"].astype(str).str[:10]
-                            df_plans.loc[tidx, "完了フラグ"] = 1 if new_done else 0
-                            save_plans(df_plans)
-                            df_u = load_users()
-                            cur_pt = int(df_u.loc[df_u["ユーザー名"] == selected_user, "現在ポイント"].values[0])
-                            if new_done:
-                                new_pt = cur_pt + TASK_TOGGLE_POINTS
-                                st.toast(f"✅ +{TASK_TOGGLE_POINTS}pt 獲得！")
-                            else:
-                                new_pt = max(0, cur_pt - TASK_TOGGLE_POINTS)
-                                st.toast(f"↩️ -{TASK_TOGGLE_POINTS}pt")
-                            df_u.loc[df_u["ユーザー名"] == selected_user, "現在ポイント"] = new_pt
-                            save_users(df_u)
-                            st.rerun()
+                            chk_changes[tidx] = new_done
                     with col2:
                         if st.button("編集", key=f"plan_edit_{tidx}"):
                             edit_task_dialog(tidx)
+
+                if chk_changes:
+                    if st.button(f"💾 チェックを保存（{subject}）", type="primary", key=f"save_chk_{mid}"):
+                        df_plans = load_plans()
+                        df_plans["日付"] = df_plans["日付"].astype(str).str[:10]
+                        df_u = load_users()
+                        cur_pt = int(df_u.loc[df_u["ユーザー名"] == selected_user, "現在ポイント"].values[0])
+                        pt_delta = 0
+                        for tidx, new_done in chk_changes.items():
+                            df_plans.loc[tidx, "完了フラグ"] = 1 if new_done else 0
+                            pt_delta += TASK_TOGGLE_POINTS if new_done else -TASK_TOGGLE_POINTS
+                        new_pt = max(0, cur_pt + pt_delta)
+                        df_u.loc[df_u["ユーザー名"] == selected_user, "現在ポイント"] = new_pt
+                        save_plans(df_plans)
+                        save_users(df_u)
+                        st.toast(f"💾 保存しました！ポイント：{new_pt}pt（{'+' if pt_delta >= 0 else ''}{pt_delta}pt）")
+                        st.rerun()
+
                 if st.button(f"➕ タスク追加（{subject}）", key=f"add_task_{mid}"):
                     add_task_dialog(mid, selected_user)
 
