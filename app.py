@@ -74,7 +74,7 @@ YOUTUBE_EMBED_URL = "https://www.youtube.com/embed/dQw4w9WgXcQ"
 GOOGLE_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScVVn3qGYn48oxTzGLOE0iPzFqYjvQnLexample/viewform"
 
 # ==========================================================
-# ▼ gspread 接続ヘルパー（st-gsheets-connection の代替）
+# ▼ gspread 接続ヘルパー
 # ==========================================================
 @st.cache_resource
 def get_gspread_client():
@@ -88,34 +88,52 @@ def get_gspread_client():
     )
     return gspread.authorize(creds)
 
-def read_worksheet(worksheet_name: str, retries: int = 3) -> pd.DataFrame:
+
+def _get_sheet():
+    """毎回新しい接続でスプレッドシートを取得する"""
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=scopes,
+    )
+    client = gspread.authorize(creds)
+    return client.open_by_url(SPREADSHEET_URL)
+
+
+def read_worksheet(worksheet_name: str, retries: int = 5) -> pd.DataFrame:
     for attempt in range(retries):
         try:
-            client = get_gspread_client()
-            sheet = client.open_by_url(SPREADSHEET_URL)
+            sheet = _get_sheet()
             ws = sheet.worksheet(worksheet_name)
             data = ws.get_all_records()
             return pd.DataFrame(data) if data else pd.DataFrame()
-        except Exception as e:
+        except Exception:
             if attempt < retries - 1:
-                time.sleep(2 ** attempt)
+                wait = 2 ** attempt
+                time.sleep(wait)
             else:
-                raise e
+                st.error("データの読み込みに失敗しました。ページを再読み込みしてください。")
+                return pd.DataFrame()
 
-def write_worksheet(worksheet_name: str, df: pd.DataFrame, retries: int = 3):
+
+def write_worksheet(worksheet_name: str, df: pd.DataFrame, retries: int = 5):
     for attempt in range(retries):
         try:
-            client = get_gspread_client()
-            sheet = client.open_by_url(SPREADSHEET_URL)
+            sheet = _get_sheet()
             ws = sheet.worksheet(worksheet_name)
             ws.clear()
             ws.update([df.columns.values.tolist()] + df.fillna("").values.tolist())
             return
-        except Exception as e:
+        except Exception:
             if attempt < retries - 1:
-                time.sleep(2 ** attempt)
+                wait = 2 ** attempt
+                time.sleep(wait)
             else:
-                raise e
+                st.error("データの保存に失敗しました。もう一度試してください。")
+                raise
 
 # ==========================================================
 # ▼ データ読み書き関数
