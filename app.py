@@ -7,6 +7,7 @@ import json
 from datetime import date, datetime, timedelta
 import calendar
 import os
+import time
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -87,19 +88,34 @@ def get_gspread_client():
     )
     return gspread.authorize(creds)
 
-def read_worksheet(worksheet_name: str) -> pd.DataFrame:
-    client = get_gspread_client()
-    sheet = client.open_by_url(SPREADSHEET_URL)
-    ws = sheet.worksheet(worksheet_name)
-    data = ws.get_all_records()
-    return pd.DataFrame(data) if data else pd.DataFrame()
+def read_worksheet(worksheet_name: str, retries: int = 3) -> pd.DataFrame:
+    for attempt in range(retries):
+        try:
+            client = get_gspread_client()
+            sheet = client.open_by_url(SPREADSHEET_URL)
+            ws = sheet.worksheet(worksheet_name)
+            data = ws.get_all_records()
+            return pd.DataFrame(data) if data else pd.DataFrame()
+        except Exception as e:
+            if attempt < retries - 1:
+                time.sleep(2 ** attempt)
+            else:
+                raise e
 
-def write_worksheet(worksheet_name: str, df: pd.DataFrame):
-    client = get_gspread_client()
-    sheet = client.open_by_url(SPREADSHEET_URL)
-    ws = sheet.worksheet(worksheet_name)
-    ws.clear()
-    ws.update([df.columns.values.tolist()] + df.fillna("").values.tolist())
+def write_worksheet(worksheet_name: str, df: pd.DataFrame, retries: int = 3):
+    for attempt in range(retries):
+        try:
+            client = get_gspread_client()
+            sheet = client.open_by_url(SPREADSHEET_URL)
+            ws = sheet.worksheet(worksheet_name)
+            ws.clear()
+            ws.update([df.columns.values.tolist()] + df.fillna("").values.tolist())
+            return
+        except Exception as e:
+            if attempt < retries - 1:
+                time.sleep(2 ** attempt)
+            else:
+                raise e
 
 # ==========================================================
 # ▼ データ読み書き関数
