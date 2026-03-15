@@ -103,23 +103,26 @@ def _get_sheet():
     return client.open_by_url(SPREADSHEET_URL)
 
 
-def read_worksheet(worksheet_name: str, retries: int = 5) -> pd.DataFrame:
+def read_worksheet(worksheet_name: str, retries: int = 3) -> pd.DataFrame:
     for attempt in range(retries):
         try:
             sheet = _get_sheet()
             ws = sheet.worksheet(worksheet_name)
             data = ws.get_all_records()
             return pd.DataFrame(data) if data else pd.DataFrame()
-        except Exception:
-            if attempt < retries - 1:
-                wait = 2 ** attempt
-                time.sleep(wait)
+        except Exception as e:
+            if "429" in str(e) or "Quota" in str(e):
+                if attempt < retries - 1:
+                    time.sleep(5 * (attempt + 1))
+                else:
+                    st.warning("⏳ データ読み込み中...少々お待ちください")
+                    return pd.DataFrame()
             else:
-                st.error("データの読み込みに失敗しました。ページを再読み込みしてください。")
-                return pd.DataFrame()
+                raise e
+    return pd.DataFrame()
 
 
-def write_worksheet(worksheet_name: str, df: pd.DataFrame, retries: int = 5):
+def write_worksheet(worksheet_name: str, df: pd.DataFrame, retries: int = 3):
     for attempt in range(retries):
         try:
             sheet = _get_sheet()
@@ -127,18 +130,20 @@ def write_worksheet(worksheet_name: str, df: pd.DataFrame, retries: int = 5):
             ws.clear()
             ws.update([df.columns.values.tolist()] + df.fillna("").values.tolist())
             return
-        except Exception:
-            if attempt < retries - 1:
-                wait = 2 ** attempt
-                time.sleep(wait)
+        except Exception as e:
+            if "429" in str(e) or "Quota" in str(e):
+                if attempt < retries - 1:
+                    time.sleep(5 * (attempt + 1))
+                else:
+                    st.warning("⏳ 保存に時間がかかっています...再度お試しください")
+                    return
             else:
-                st.error("データの保存に失敗しました。もう一度試してください。")
-                raise
+                raise e
 
 # ==========================================================
 # ▼ データ読み書き関数
 # ==========================================================
-@st.cache_data
+@st.cache_data(ttl=60)
 def load_users():
     df = read_worksheet("users")
     if df is None or df.empty:
@@ -163,6 +168,7 @@ def today_str():
 def this_month_str():
     return date.today().strftime("%Y-%m")
 
+@st.cache_data(ttl=60)
 def load_plans():
     df = read_worksheet("plans")
     if df is None or df.empty:
@@ -175,6 +181,7 @@ def load_plans():
 def save_plans(df):
     write_worksheet("plans", df)
 
+@st.cache_data(ttl=300)
 def load_content():
     df = read_worksheet("content")
     if df is None or df.empty:
@@ -184,6 +191,7 @@ def load_content():
 def save_content(df):
     write_worksheet("content", df)
 
+@st.cache_data(ttl=300)
 def load_news():
     df = read_worksheet("news")
     if df is None or df.empty:
@@ -195,6 +203,7 @@ def load_news():
 def save_news(df):
     write_worksheet("news", df)
 
+@st.cache_data(ttl=300)
 def load_materials():
     df = read_worksheet("materials")
     if df is None or df.empty:
