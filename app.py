@@ -884,7 +884,17 @@ elif st.session_state.page == PAGE_GACHA:
                 if rand <= cumulative:
                     result = item
                     break
-            st.markdown(f'<div class="gacha-result-box {result["css"]}">{result["label"]}</div>', unsafe_allow_html=True)
-            if result["rank"] == "URレア":
-                st.balloons()
+            st.session_state["gacha_result"] = result
+            st.session_state["gacha_user"] = selected_user
+            st.session_state["gacha_pts"] = new_pts
+
+    if st.session_state.get("gacha_user") == selected_user and st.session_state.get("gacha_result"):
+        result = st.session_state["gacha_result"]
+        st.markdown(f'<div class="gacha-result-box {result["css"]}">{result["label"]}</div>', unsafe_allow_html=True)
+        if result["rank"] == "URレア":
+            st.balloons()
+        if st.button("🔄 もう一度引く", key="gacha_reset"):
+            st.session_state["gacha_result"] = None
+            st.session_state["gacha_user"] = None
+            st.session_state["gacha_pts"] = None
             st.rerun()
