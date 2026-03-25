@@ -1,6 +1,7 @@
-# Supabase の plans テーブルに deadline / month_plan 等のカラムを追加してください（未作成だと INSERT が失敗することがあります）。
+# Supabase の plans テーブルに deadline / month_plan / task_type 等のカラムを追加してください（未作成だと INSERT が失敗することがあります）。
 # 例: ALTER TABLE plans ADD COLUMN IF NOT EXISTS deadline text;
 #     ALTER TABLE plans ADD COLUMN IF NOT EXISTS month_plan text;
+#     ALTER TABLE plans ADD COLUMN IF NOT EXISTS task_type text DEFAULT 'lesson';
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -170,7 +171,7 @@ def load_plans() -> pd.DataFrame:
         df = pd.DataFrame(columns=["id", "username", "big_plan", "mid_plan",
                                    "task_name", "task_date", "is_done",
                                    "video_url", "material_id", "page_range",
-                                   "deadline", "month_plan"])
+                                   "deadline", "month_plan", "task_type"])
     # 旧カラム名との互換マッピング
     rename_map = {
         "username": "ユーザー名", "big_plan": "大計画", "mid_plan": "中計画",
@@ -184,6 +185,7 @@ def load_plans() -> pd.DataFrame:
         ("material_id", ""),
         ("page_range", ""),
         ("完了フラグ", 0),
+        ("task_type", "lesson"),
     ]:
         if col not in df.columns:
             df[col] = default
@@ -206,6 +208,7 @@ def insert_plan_row(
     page_range: str = "",
     deadline: str = "",
     month_plan: str = "",
+    task_type: str = "lesson",
 ):
     sb = get_supabase()
     sb.table("plans").insert({
@@ -220,6 +223,7 @@ def insert_plan_row(
         "page_range": page_range or "",
         "deadline": deadline or "",
         "month_plan": month_plan or "",
+        "task_type": task_type or "lesson",
     }).execute()
     st.cache_data.clear()
 
@@ -920,16 +924,26 @@ elif st.session_state.page == PAGE_SCHEDULE:
 
     df_plans = load_plans()
     df_plans["日付"] = df_plans["日付"].astype(str).str[:10]
-    today_iso = date.today().isoformat()
-    df_today = df_plans[
+    today = date.today().isoformat()
+    df_today_all = df_plans[
         (df_plans["ユーザー名"] == selected_user)
-        & (df_plans["日付"] == today_iso)
+        & (df_plans["日付"] == today)
         & (df_plans["小計画タスク"] != "（未設定）")
     ].copy()
 
-    if df_today.empty:
+    if df_today_all.empty:
         st.info("🎉 今日のタスクはありません！")
     else:
+        if "task_type" not in df_today_all.columns:
+            df_today_all["task_type"] = "lesson"
+        else:
+            df_today_all["task_type"] = df_today_all["task_type"].fillna(
+                "lesson"
+            )
+        tt = df_today_all["task_type"].astype(str)
+        df_lesson = df_today_all[tt != "homework"].copy()
+        df_homework = df_today_all[tt == "homework"].copy()
+
         df_users = load_users()
         _un_col = "username" if "username" in df_users.columns else "ユーザー名"
         _pts_col = (
@@ -938,152 +952,171 @@ elif st.session_state.page == PAGE_SCHEDULE:
             else "現在ポイント"
         )
 
-        h0, h1, h2, h3, h4, h5 = st.columns([0.5, 4, 1.5, 1, 2, 1.5])
-        with h1:
-            st.caption("タスク名")
-        with h2:
-            st.caption("ページ範囲")
-        with h3:
-            st.caption("動画")
-        with h4:
-            st.caption("タイマー")
-        with h5:
-            st.caption("完了")
-        st.divider()
+        def render_task_rows(df_target):
+            if df_target.empty:
+                st.info("タスクはありません")
+                return
 
-        for _, task in df_today.iterrows():
-            plan_id = int(task["id"])
-            task_name = str(task["小計画タスク"])
-            mid_plan = str(task["中計画"])
-            is_done = int(task.get("完了フラグ", 0))
-            page_rng = str(task.get("page_range", "") or "")
-            video_url = str(task.get("video_url", "") or "")
-
-            timer_start_key = f"sch_ts_{plan_id}"
-            elapsed_key = f"sch_el_{plan_id}"
-            if elapsed_key not in st.session_state:
-                st.session_state[elapsed_key] = 0
-
-            col0, col1, col2, col3, col4, col5 = st.columns(
-                [0.5, 4, 1.5, 1, 2, 1.5]
-            )
-
-            with col0:
-                if is_done:
-                    st.markdown("✅")
-                else:
-                    st.markdown("⬜")
-
-            with col1:
-                if is_done:
-                    st.markdown(
-                        f'<span style="color:#b2bec3;text-decoration:line-through;">'
-                        f"{task_name}</span>",
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    st.markdown(f"**{task_name}**")
-                st.caption(mid_plan)
-
-            with col2:
-                if page_rng and page_rng not in ("nan", "None", ""):
-                    st.caption(f"📄 {page_rng}")
-
-            with col3:
-                if video_url and video_url not in ("nan", "", "None"):
-                    st.link_button("▶", video_url.strip())
-
-            with col4:
-                if not is_done:
-                    t_col1, t_col2 = st.columns(2)
-                    with t_col1:
-                        if st.button(
-                            "▶開始",
-                            key=f"btn_start_sch_{plan_id}",
-                            use_container_width=True,
-                        ):
-                            st.session_state[timer_start_key] = datetime.now()
-                            st.rerun()
-                    with t_col2:
-                        if st.button(
-                            "⏹終了",
-                            key=f"btn_stop_sch_{plan_id}",
-                            use_container_width=True,
-                        ):
-                            if (
-                                timer_start_key in st.session_state
-                                and st.session_state[timer_start_key]
-                            ):
-                                elapsed = (
-                                    datetime.now()
-                                    - st.session_state[timer_start_key]
-                                ).seconds
-                                st.session_state[elapsed_key] += elapsed
-                                st.session_state[timer_start_key] = None
-                            st.rerun()
-                    elapsed_total = st.session_state.get(elapsed_key, 0)
-                    if elapsed_total > 0:
-                        mins = elapsed_total // 60
-                        secs = elapsed_total % 60
-                        st.caption(f"⏱ {mins}分{secs}秒")
-                else:
-                    st.caption("✅ 完了済み")
-
-            with col5:
-                if not is_done:
-                    if st.button(
-                        "完了！",
-                        key=f"done_{plan_id}",
-                        type="primary",
-                        use_container_width=True,
-                    ):
-                        current_pts = int(
-                            df_users[df_users[_un_col] == selected_user][
-                                _pts_col
-                            ].iloc[0]
-                        )
-                        new_pts = current_pts + TASK_TOGGLE_POINTS
-                        update_plan_row(plan_id, {"is_done": 1})
-                        save_user_fields(
-                            selected_user, {"current_points": new_pts}
-                        )
-                        st.toast(
-                            f"🎉 +{TASK_TOGGLE_POINTS}pt 獲得！",
-                            icon="🌟",
-                        )
-                        st.rerun()
-                else:
-                    st.markdown(
-                        '<span style="color:#00b894;font-size:12px;">🎉 完了！</span>',
-                        unsafe_allow_html=True,
-                    )
-                    if st.button(
-                        "↩️ 戻す",
-                        key=f"undo_{plan_id}",
-                        use_container_width=True,
-                    ):
-                        current_pts = int(
-                            df_users[df_users[_un_col] == selected_user][
-                                _pts_col
-                            ].iloc[0]
-                        )
-                        new_pts = max(0, current_pts - TASK_TOGGLE_POINTS)
-                        update_plan_row(plan_id, {"is_done": 0})
-                        save_user_fields(
-                            selected_user, {"current_points": new_pts}
-                        )
-                        st.toast(
-                            "↩️ タスクを未完了に戻しました",
-                            icon="🔄",
-                        )
-                        st.rerun()
-
+            h0, h1, h2, h3, h4, h5 = st.columns([0.5, 4, 1.5, 1, 2, 1.5])
+            with h1:
+                st.caption("タスク名")
+            with h2:
+                st.caption("ページ範囲")
+            with h3:
+                st.caption("動画")
+            with h4:
+                st.caption("タイマー")
+            with h5:
+                st.caption("完了")
             st.divider()
 
-        total = len(df_today)
-        done = int(df_today["完了フラグ"].astype(int).sum())
-        st.progress(done / total if total > 0 else 0)
-        st.caption(f"本日の進捗：{done}/{total} タスク完了")
+            for _, task in df_target.iterrows():
+                plan_id = int(task["id"])
+                task_name = str(task["小計画タスク"])
+                mid_plan = str(task["中計画"])
+                is_done = int(task.get("完了フラグ", 0))
+                page_rng = str(task.get("page_range", "") or "")
+                video_url = str(task.get("video_url", "") or "")
+
+                start_key = f"start_{plan_id}"
+                elapsed_key = f"elapsed_{plan_id}"
+                if elapsed_key not in st.session_state:
+                    st.session_state[elapsed_key] = 0
+
+                col0, col1, col2, col3, col4, col5 = st.columns(
+                    [0.5, 4, 1.5, 1, 2, 1.5]
+                )
+
+                with col0:
+                    st.markdown("✅" if is_done else "⬜")
+
+                with col1:
+                    if is_done:
+                        st.markdown(
+                            f'<span style="color:#b2bec3;text-decoration:line-through;">'
+                            f"{task_name}</span>",
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.markdown(f"**{task_name}**")
+                    st.caption(mid_plan)
+
+                with col2:
+                    if page_rng and page_rng not in ("nan", "None", ""):
+                        st.caption(f"📄 {page_rng}")
+
+                with col3:
+                    if video_url and video_url not in ("nan", "", "None"):
+                        st.link_button("▶", video_url.strip())
+
+                with col4:
+                    if not is_done:
+                        t1, t2 = st.columns(2)
+                        with t1:
+                            if st.button(
+                                "▶開始",
+                                key=f"start_btn_{plan_id}",
+                                use_container_width=True,
+                            ):
+                                st.session_state[start_key] = datetime.now()
+                                st.rerun()
+                        with t2:
+                            if st.button(
+                                "⏹終了",
+                                key=f"stop_btn_{plan_id}",
+                                use_container_width=True,
+                            ):
+                                if st.session_state.get(start_key):
+                                    elapsed = (
+                                        datetime.now()
+                                        - st.session_state[start_key]
+                                    ).seconds
+                                    st.session_state[elapsed_key] += elapsed
+                                    st.session_state[start_key] = None
+                                st.rerun()
+                        elapsed_total = st.session_state.get(elapsed_key, 0)
+                        if elapsed_total > 0:
+                            mins = elapsed_total // 60
+                            secs = elapsed_total % 60
+                            st.caption(f"⏱ {mins}分{secs}秒")
+                    else:
+                        st.caption("✅ 完了済み")
+
+                with col5:
+                    if not is_done:
+                        if st.button(
+                            "完了！",
+                            key=f"done_btn_{plan_id}",
+                            type="primary",
+                            use_container_width=True,
+                        ):
+                            current_pts = int(
+                                df_users[df_users[_un_col] == selected_user][
+                                    _pts_col
+                                ].iloc[0]
+                            )
+                            new_pts = current_pts + TASK_TOGGLE_POINTS
+                            update_plan_row(plan_id, {"is_done": 1})
+                            save_user_fields(
+                                selected_user, {"current_points": new_pts}
+                            )
+                            st.toast(
+                                f"🎉 +{TASK_TOGGLE_POINTS}pt 獲得！",
+                                icon="🌟",
+                            )
+                            st.rerun()
+                    else:
+                        st.markdown(
+                            '<span style="color:#00b894;font-size:12px;">🎉 完了！</span>',
+                            unsafe_allow_html=True,
+                        )
+                        if st.button(
+                            "↩️ 戻す",
+                            key=f"undo_btn_{plan_id}",
+                            use_container_width=True,
+                        ):
+                            current_pts = int(
+                                df_users[df_users[_un_col] == selected_user][
+                                    _pts_col
+                                ].iloc[0]
+                            )
+                            new_pts = max(0, current_pts - TASK_TOGGLE_POINTS)
+                            update_plan_row(plan_id, {"is_done": 0})
+                            save_user_fields(
+                                selected_user, {"current_points": new_pts}
+                            )
+                            st.toast(
+                                "↩️ タスクを未完了に戻しました",
+                                icon="🔄",
+                            )
+                            st.rerun()
+
+                st.divider()
+
+            total = len(df_target)
+            done = int(df_target["完了フラグ"].astype(int).sum())
+            st.progress(done / total if total > 0 else 0)
+            st.caption(f"進捗：{done}/{total} タスク完了")
+
+        st.markdown("### 📖 学習タスク")
+        render_task_rows(df_lesson)
+
+        st.markdown("---")
+
+        homework_done = (
+            int(df_homework["完了フラグ"].astype(int).sum())
+            if not df_homework.empty
+            else 0
+        )
+        homework_total = len(df_homework)
+        badge = (
+            f"（{homework_done}/{homework_total} 完了）"
+            if homework_total > 0
+            else "（なし）"
+        )
+
+        st.markdown(f"### 📝 宿題 {badge}")
+        render_task_rows(df_homework)
 
 # ==========================================================
 # ▼ 計画確認ページ
@@ -1451,6 +1484,14 @@ elif st.session_state.page == PAGE_PLAN:
                     task_toc_list = []
                 task_toc_list = [t for t in task_toc_list if isinstance(t, dict)]
 
+        task_type = st.radio(
+            "タスクの種類",
+            ["📖 学習タスク", "📝 宿題"],
+            horizontal=True,
+            key="task_type_radio",
+        )
+        task_type_val = "homework" if task_type == "📝 宿題" else "lesson"
+
         st.markdown("**📝 タスク名を設定してください**")
         if len(task_toc_list) == 0:
             task_input_mode = "✏️ 自由入力"
@@ -1558,6 +1599,7 @@ elif st.session_state.page == PAGE_PLAN:
                         current_date.isoformat(),
                         video_url=vu,
                         page_range=pr,
+                        task_type=task_type_val,
                     )
                     last_date = current_date
                     current_date += timedelta(days=1)
