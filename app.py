@@ -228,6 +228,21 @@ def delete_plan_row(plan_id: int):
     sb.table("plans").delete().eq("id", plan_id).execute()
     st.cache_data.clear()
 
+
+def delete_plans_by_condition(
+    username: str, big_plan=None, mid_plan=None
+):
+    """大計画名または中計画名に一致する全行を削除"""
+    sb = get_supabase()
+    q = sb.table("plans").delete().eq("username", username)
+    if big_plan is not None:
+        q = q.eq("big_plan", big_plan)
+    if mid_plan is not None:
+        q = q.eq("mid_plan", mid_plan)
+    q.execute()
+    st.cache_data.clear()
+
+
 # ==========================================================
 # ▼ コンテンツデータ
 # ==========================================================
@@ -1473,10 +1488,45 @@ elif st.session_state.page == PAGE_PLAN:
                 deadline_label = (
                     f"（期限：{dv[:4]}年{int(dv[5:7])}月）"
                 )
-            st.markdown(
-                f'<div class="plan-big">🎯 大計画：{big_plan} {deadline_label}</div>',
-                unsafe_allow_html=True,
-            )
+
+            col_big_title, col_big_del = st.columns([8, 1])
+            with col_big_title:
+                st.markdown(
+                    f"## 🎯 大計画：{big_plan} {deadline_label}"
+                )
+            with col_big_del:
+                _bk = f"del_big_{bi}"
+                if st.button(
+                    "🗑️",
+                    key=_bk,
+                    help=f"「{big_plan}」とその全タスクを削除",
+                ):
+                    st.session_state[f"confirm_del_big_{bi}"] = True
+
+            if st.session_state.get(f"confirm_del_big_{bi}", False):
+                st.error(
+                    f"⚠️ 「{big_plan}」とそれに紐づく全ての中計画・タスクを削除します。"
+                    "よろしいですか？"
+                )
+                col_yes, col_no = st.columns(2)
+                with col_yes:
+                    if st.button(
+                        "✅ はい、削除する",
+                        key=f"yes_del_big_{bi}",
+                    ):
+                        delete_plans_by_condition(
+                            selected_user, big_plan=big_plan
+                        )
+                        st.session_state[f"confirm_del_big_{bi}"] = False
+                        st.success(f"「{big_plan}」を削除しました")
+                        st.rerun()
+                with col_no:
+                    if st.button(
+                        "❌ キャンセル",
+                        key=f"no_del_big_{bi}",
+                    ):
+                        st.session_state[f"confirm_del_big_{bi}"] = False
+                        st.rerun()
 
             mid_plans = group_df["中計画"].unique()
             for mj, mid in enumerate(mid_plans):
@@ -1498,10 +1548,47 @@ elif st.session_state.page == PAGE_PLAN:
                 progress = done_count / total if total > 0 else 0
                 label = f"{subject}" + (f"：{goal}" if goal else "")
                 title_line = f"{month_label} {label}".strip()
-                st.markdown(
-                    f'<div class="plan-mid">📚 {title_line}　（{done_count}/{total} 完了）</div>',
-                    unsafe_allow_html=True,
-                )
+                col_mid_title, col_mid_del = st.columns([8, 1])
+                with col_mid_title:
+                    st.markdown(
+                        f"### 📚 {title_line}　（{done_count}/{total} 完了）"
+                    )
+                with col_mid_del:
+                    del_mid_key = f"del_mid_{bi}_{mj}"
+                    if st.button(
+                        "🗑️",
+                        key=del_mid_key,
+                        help=f"「{mid}」とその全タスクを削除",
+                    ):
+                        st.session_state[f"confirm_{del_mid_key}"] = True
+
+                if st.session_state.get(f"confirm_{del_mid_key}", False):
+                    st.error(
+                        f"⚠️ 「{mid}」とそれに紐づく全タスクを削除します。"
+                        "よろしいですか？"
+                    )
+                    col_my, col_mn = st.columns(2)
+                    with col_my:
+                        if st.button(
+                            "✅ はい、削除する",
+                            key=f"yes_{del_mid_key}",
+                        ):
+                            delete_plans_by_condition(
+                                selected_user,
+                                big_plan=big_plan,
+                                mid_plan=mid,
+                            )
+                            st.session_state[f"confirm_{del_mid_key}"] = False
+                            st.success(f"「{mid}」を削除しました")
+                            st.rerun()
+                    with col_mn:
+                        if st.button(
+                            "❌ キャンセル",
+                            key=f"no_{del_mid_key}",
+                        ):
+                            st.session_state[f"confirm_{del_mid_key}"] = False
+                            st.rerun()
+
                 st.progress(progress)
 
                 with st.expander(
@@ -1512,18 +1599,33 @@ elif st.session_state.page == PAGE_PLAN:
                     for _, trow in mid_tasks.iterrows():
                         t_done = int(trow["完了フラグ"]) == 1
                         plan_id = int(trow["id"])
-                        col1, col2 = st.columns([4, 1])
-                        with col1:
+                        col_check, col_name, col_edit, col_task_del = st.columns(
+                            [1, 6, 1, 1]
+                        )
+                        with col_check:
                             new_done = st.checkbox(
-                                f"{trow['小計画タスク']}　（{trow['日付']}）",
+                                "",
                                 value=t_done,
                                 key=f"plan_chk_{plan_id}",
+                                label_visibility="collapsed",
                             )
-                            if new_done != t_done:
-                                chk_changes[plan_id] = new_done
-                        with col2:
+                        with col_name:
+                            st.markdown(
+                                f"**{trow['小計画タスク']}**　（{trow['日付']}）"
+                            )
+                        with col_edit:
                             if st.button("編集", key=f"plan_edit_{plan_id}"):
                                 edit_task_dialog(plan_id)
+                        with col_task_del:
+                            if st.button(
+                                "🗑️",
+                                key=f"del_task_{plan_id}",
+                                help="このタスクを削除",
+                            ):
+                                delete_plan_row(plan_id)
+                                st.rerun()
+                        if new_done != t_done:
+                            chk_changes[plan_id] = new_done
 
                     if chk_changes:
                         if st.button(
