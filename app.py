@@ -27,6 +27,32 @@ try:
 except ImportError:
     HAS_OPTION_MENU = False
 
+import base64
+from pathlib import Path
+
+
+def get_logo_base64() -> str:
+    """ロゴ画像をbase64エンコードして返す"""
+    logo_path = Path("assets/logo.png")
+    if logo_path.exists():
+        with open(logo_path, "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    return ""
+
+
+LOGO_B64 = get_logo_base64()
+
+
+def logo_img(width: int = 80) -> str:
+    """ロゴのHTMLタグを返す（base64埋め込み）"""
+    if LOGO_B64:
+        return (
+            f'<img src="data:image/png;base64,{LOGO_B64}" '
+            f'width="{width}" style="vertical-align:middle;">'
+        )
+    return "📚"
+
+
 st.set_page_config(
     page_title="未来塾 生徒用アプリ",
     page_icon="📚",
@@ -513,17 +539,28 @@ def show_top_page():
             st.session_state.lang = LANG_ZH if lang == LANG_JA else LANG_JA
             st.rerun()
 
-    st.markdown(f"""
-    <div style="text-align:center; padding: 2rem 0;">
-        <div style="font-size: 4rem;">🌟</div>
-        <h1 style="font-size: 3rem; color: #f9a825; font-weight: bold;">
-            {t["school_name"]}
-        </h1>
-        <p style="font-size: 1.3rem; color: #555; margin-top: 0.5rem;">
-            {t["catchcopy"]}
+    # ロゴ＋塾名をセンタリング表示
+    _logo_top = (
+        f'<img src="data:image/png;base64,{LOGO_B64}" width="140" '
+        f'style="margin-bottom:12px;">'
+        if LOGO_B64
+        else '<div style="font-size:4rem;margin-bottom:12px;">📚</div>'
+    )
+    st.markdown(
+        f"""
+    <div style="text-align:center;padding:20px 0 10px 0;">
+        {_logo_top}
+        <h1 style="color:#F0C040;margin:0;font-size:2em;">未来塾</h1>
+        <p style="color:#636e72;font-size:1em;margin:4px 0 0 0;">
+            MIRAI JAPANESE LANGUAGE SCHOOL
+        </p>
+        <p style="color:#2d3436;font-size:1.1em;margin:12px 0;">
+            楽しく学んで、未来を切り開こう！
         </p>
     </div>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
     st.markdown("---")
 
@@ -618,8 +655,14 @@ df_plans = load_plans()
 # ▼ 管理者画面
 # ==========================================================
 if selected_user == ADMIN_OPTION:
-    # 管理者ログアウトボタン（右上に配置）
-    col_admin_title, col_admin_logout = st.columns([8, 1])
+    col_admin_logo, col_admin_title, col_admin_logout = st.columns([1, 7, 1])
+    with col_admin_logo:
+        if LOGO_B64:
+            st.markdown(
+                f'<img src="data:image/png;base64,{LOGO_B64}" '
+                f'width="50" style="margin-top:4px;">',
+                unsafe_allow_html=True,
+            )
     with col_admin_title:
         st.markdown("## 🏫 管理者画面")
     with col_admin_logout:
@@ -962,19 +1005,28 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-_, header_col = st.columns([3, 1])
-with header_col:
-    st.markdown(f'<p class="header-right">こんにちは、{selected_user}さん！　現在のポイント：<strong>{current_points}pt</strong></p>', unsafe_allow_html=True)
+col_logo, col_greeting, col_lang, col_logout = st.columns([1, 5, 1, 1])
+with col_logo:
+    if LOGO_B64:
+        st.markdown(
+            f'<img src="data:image/png;base64,{LOGO_B64}" '
+            f'width="50" style="margin-top:4px;">',
+            unsafe_allow_html=True,
+        )
+with col_greeting:
+    st.markdown(
+        f"こんにちは、**{selected_user}**さん！　"
+        f"現在のポイント：**{current_points}pt**"
+    )
 
 lang = st.session_state.lang
 t = TEXTS[lang]
 
-btn_col1, btn_col2 = st.columns([1, 1])
-with btn_col1:
+with col_lang:
     if st.button(t["lang_btn"], key="lang_toggle_main"):
         st.session_state.lang = LANG_ZH if lang == LANG_JA else LANG_JA
         st.rerun()
-with btn_col2:
+with col_logout:
     if st.button(t["logout_btn"], key="logout_btn"):
         st.session_state.logged_in = False
         st.session_state.login_user = ""
