@@ -1606,6 +1606,157 @@ elif st.session_state.page == PAGE_PLAN:
     }
     """
 
+            # ────────────────────────────
+            # 大計画・中計画サマリーパネル
+            # ────────────────────────────
+            if "cal_view_year" not in st.session_state:
+                st.session_state["cal_view_year"] = date.today().year
+            if "cal_view_month" not in st.session_state:
+                st.session_state["cal_view_month"] = date.today().month
+
+            view_year = st.session_state["cal_view_year"]
+            view_month = st.session_state["cal_view_month"]
+            view_month_str = f"{view_year}-{str(view_month).zfill(2)}"
+
+            col_prev, col_title, col_next = st.columns([1, 4, 1])
+            with col_prev:
+                if st.button("◀ 前月", key="summary_prev"):
+                    if view_month == 1:
+                        st.session_state["cal_view_year"] -= 1
+                        st.session_state["cal_view_month"] = 12
+                    else:
+                        st.session_state["cal_view_month"] -= 1
+                    st.rerun()
+            with col_title:
+                st.markdown(
+                    "<h4 style='text-align:center;margin:0;'>"
+                    f"📊 {view_year}年{view_month}月の計画サマリー"
+                    "</h4>",
+                    unsafe_allow_html=True,
+                )
+            with col_next:
+                if st.button("次月 ▶", key="summary_next"):
+                    if view_month == 12:
+                        st.session_state["cal_view_year"] += 1
+                        st.session_state["cal_view_month"] = 1
+                    else:
+                        st.session_state["cal_view_month"] += 1
+                    st.rerun()
+
+            _ds = df_user["日付"].astype(str).str[:10]
+            df_month = (
+                df_user[_ds.str.startswith(view_month_str, na=False)].copy()
+                if not df_user.empty
+                else pd.DataFrame()
+            )
+
+            if df_month.empty:
+                st.info(f"{view_year}年{view_month}月のタスクはありません。")
+            else:
+                big_plans_month = df_month["大計画"].unique().tolist()
+
+                for big in big_plans_month:
+                    df_big = df_month[df_month["大計画"] == big]
+
+                    total_tasks = len(
+                        df_big[df_big["小計画タスク"] != "（未設定）"]
+                    )
+                    done_tasks = int(df_big["完了フラグ"].astype(int).sum())
+                    progress = done_tasks / total_tasks if total_tasks > 0 else 0
+
+                    deadline_val = (
+                        df_big["deadline"].iloc[0]
+                        if "deadline" in df_big.columns
+                        else ""
+                    )
+                    deadline_label = ""
+                    _dv = str(deadline_val).strip() if deadline_val is not None else ""
+                    if _dv and len(_dv) == 7 and _dv[4] == "-":
+                        deadline_label = (
+                            f"　⏰ 期限：{_dv[:4]}年{int(_dv[5:7])}月"
+                        )
+
+                    st.markdown(
+                        f"""
+            <div style='
+                background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                padding: 8px 16px;
+                border-radius: 8px;
+                margin: 8px 0 4px 0;
+                font-weight: bold;
+            '>
+            🎯 {big}{deadline_label}
+            &nbsp;&nbsp;
+            <span style='font-size:12px;font-weight:normal;'>
+                {done_tasks}/{total_tasks}タスク完了
+            </span>
+            </div>
+            """,
+                        unsafe_allow_html=True,
+                    )
+                    st.progress(progress)
+
+                    mid_plans_month = [
+                        m
+                        for m in df_big["中計画"].unique().tolist()
+                        if m != "（未設定）"
+                    ]
+                    mid_cols = st.columns(max(len(mid_plans_month), 1))
+
+                    for i, mid in enumerate(mid_plans_month):
+                        df_mid = df_big[df_big["中計画"] == mid]
+
+                        mid_total = len(
+                            df_mid[df_mid["小計画タスク"] != "（未設定）"]
+                        )
+                        mid_done = int(df_mid["完了フラグ"].astype(int).sum())
+                        mid_prog = mid_done / mid_total if mid_total > 0 else 0
+
+                        month_val = (
+                            df_mid["month_plan"].iloc[0]
+                            if "month_plan" in df_mid.columns
+                            else ""
+                        )
+                        month_label = ""
+                        _mv = str(month_val).strip() if month_val is not None else ""
+                        if _mv and len(_mv) == 7 and _mv[4] == "-":
+                            month_label = (
+                                f"{_mv[:4]}年{int(_mv[5:7])}月"
+                            )
+
+                        card_color = "#74B9FF"
+                        for subject, c in color_map.items():
+                            if subject in mid:
+                                card_color = c
+                                break
+
+                        with mid_cols[i % len(mid_cols)]:
+                            st.markdown(
+                                f"""
+                    <div style='
+                        border-left: 4px solid {card_color};
+                        background: #f8f9fa;
+                        padding: 8px 12px;
+                        border-radius: 0 8px 8px 0;
+                        margin: 4px 2px;
+                        font-size: 13px;
+                    '>
+                        <b>📚 {mid}</b><br>
+                        <span style='color:#636e72;font-size:11px;'>
+                            {month_label}
+                        </span><br>
+                        <span style='color:#2d3436;'>
+                            {mid_done}/{mid_total} タスク
+                        </span>
+                    </div>
+                    """,
+                                unsafe_allow_html=True,
+                            )
+                            st.progress(mid_prog)
+
+            st.markdown("---")
+
             cal_result = st_calendar(
                 events=events,
                 options=calendar_options,
