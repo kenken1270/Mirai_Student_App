@@ -1,3 +1,7 @@
+# Supabase の plans テーブルに deadline / month_plan 等のカラムを追加してください（未作成だと INSERT が失敗することがあります）。
+# 例: ALTER TABLE plans ADD COLUMN IF NOT EXISTS deadline text;
+#     ALTER TABLE plans ADD COLUMN IF NOT EXISTS month_plan text;
+
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -165,14 +169,22 @@ def load_plans() -> pd.DataFrame:
     else:
         df = pd.DataFrame(columns=["id", "username", "big_plan", "mid_plan",
                                    "task_name", "task_date", "is_done",
-                                   "video_url", "material_id", "page_range"])
+                                   "video_url", "material_id", "page_range",
+                                   "deadline", "month_plan"])
     # 旧カラム名との互換マッピング
     rename_map = {
         "username": "ユーザー名", "big_plan": "大計画", "mid_plan": "中計画",
         "task_name": "小計画タスク", "task_date": "日付", "is_done": "完了フラグ",
     }
     df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
-    for col, default in [("video_url", ""), ("material_id", ""), ("page_range", ""), ("完了フラグ", 0)]:
+    for col, default in [
+        ("deadline", ""),
+        ("month_plan", ""),
+        ("video_url", ""),
+        ("material_id", ""),
+        ("page_range", ""),
+        ("完了フラグ", 0),
+    ]:
         if col not in df.columns:
             df[col] = default
     return df
@@ -183,19 +195,32 @@ def update_plan_row(plan_id: int, update_dict: dict):
     sb.table("plans").update(update_dict).eq("id", plan_id).execute()
     st.cache_data.clear()
 
-def insert_plan_row(username: str, big_plan: str, mid_plan: str,
-                    task_name: str, task_date: str,
-                    video_url: str | None = None, page_range: str | None = None):
+def insert_plan_row(
+    username: str,
+    big_plan: str,
+    mid_plan: str,
+    task_name: str,
+    task_date: str,
+    video_url: str = "",
+    material_id: str = "",
+    page_range: str = "",
+    deadline: str = "",
+    month_plan: str = "",
+):
     sb = get_supabase()
-    row = {
-        "username": username, "big_plan": big_plan, "mid_plan": mid_plan,
-        "task_name": task_name, "task_date": task_date, "is_done": 0,
-    }
-    if video_url is not None:
-        row["video_url"] = video_url
-    if page_range is not None:
-        row["page_range"] = page_range
-    sb.table("plans").insert(row).execute()
+    sb.table("plans").insert({
+        "username": username,
+        "big_plan": big_plan,
+        "mid_plan": mid_plan,
+        "task_name": task_name,
+        "task_date": task_date,
+        "is_done": 0,
+        "video_url": video_url or "",
+        "material_id": str(material_id) if material_id else "",
+        "page_range": page_range or "",
+        "deadline": deadline or "",
+        "month_plan": month_plan or "",
+    }).execute()
     st.cache_data.clear()
 
 def delete_plan_row(plan_id: int):
@@ -977,6 +1002,17 @@ elif st.session_state.page == PAGE_PLAN:
             placeholder="例：2027年2月 私立中学合格！",
             key="form_big_plan_text",
         )
+        st.markdown("**📅 いつまでに達成しますか？**")
+        col_y, col_m = st.columns(2)
+        with col_y:
+            deadline_year = st.selectbox(
+                "年", [2026, 2027, 2028, 2029], key="big_year"
+            )
+        with col_m:
+            deadline_month = st.selectbox(
+                "月", list(range(1, 13)), key="big_month"
+            )
+        deadline_str = f"{deadline_year}-{str(deadline_month).zfill(2)}"
         if st.button("✅ 大計画を保存", key="form_big_save"):
             if not big_plan_input or not str(big_plan_input).strip():
                 st.warning("目標を入力してください")
@@ -987,8 +1023,12 @@ elif st.session_state.page == PAGE_PLAN:
                     "",
                     "（未設定）",
                     date.today().isoformat(),
+                    deadline=deadline_str,
                 )
-                st.success(f"✅ 大計画「{big_plan_input.strip()}」を保存しました！")
+                st.success(
+                    f"✅ 大計画「{big_plan_input.strip()}」"
+                    f"（期限：{deadline_year}年{deadline_month}月）を保存しました！"
+                )
                 st.session_state.plan_mode = None
                 st.rerun()
 
@@ -1018,6 +1058,25 @@ elif st.session_state.page == PAGE_PLAN:
                 key="form_mid_big",
             )
 
+        st.markdown("**📅 何月の計画ですか？**")
+        _today = date.today()
+        _y, _mo = _today.year, _today.month
+        month_options: list[str] = []
+        for _ in range(12):
+            month_options.append(f"{_y}-{_mo:02d}")
+            _mo += 1
+            if _mo > 12:
+                _mo = 1
+                _y += 1
+        month_labels = [f"{m[:4]}年{int(m[5:7])}月" for m in month_options]
+        selected_month_idx = st.selectbox(
+            "対象月を選んでください",
+            range(len(month_options)),
+            format_func=lambda i: month_labels[i],
+            key="mid_month",
+        )
+        selected_month_str = month_options[selected_month_idx]
+
         mid_type = st.radio(
             "中計画の種類",
             ["📚 教材から選ぶ", "✏️ 自由入力"],
@@ -1025,12 +1084,13 @@ elif st.session_state.page == PAGE_PLAN:
             key="form_mid_type",
         )
 
-        df_materials = load_materials()
-        subj_col = "教科" if "教科" in df_materials.columns else "subject"
-        name_col = "教材名" if "教材名" in df_materials.columns else "material_name"
-
         mid_plan_input = ""
+        material_id = ""
         if mid_type == "📚 教材から選ぶ":
+            df_materials = load_materials()
+            subj_col = "教科" if "教科" in df_materials.columns else "subject"
+            name_col = "教材名" if "教材名" in df_materials.columns else "material_name"
+            id_col = "id" if "id" in df_materials.columns else "ID"
             if df_materials.empty:
                 st.warning("教材データがありません。")
             else:
@@ -1052,15 +1112,21 @@ elif st.session_state.page == PAGE_PLAN:
                 else:
                     names = filtered[name_col].astype(str).tolist()
                     selected_material = st.selectbox(
-                        "教材名（本のタイトル）を選んでください",
+                        "教材名を選んでください",
                         names,
                         key="form_mid_material",
                     )
                     mid_plan_input = selected_material
+                    _rows = filtered[filtered[name_col]
+                                    == selected_material]
+                    if len(_rows) > 0:
+                        material_id = str(
+                            _rows.iloc[0].get(id_col, "") or ""
+                        )
         else:
             mid_plan_input = st.text_input(
                 "中計画を自由入力してください",
-                placeholder="例：英検3級を受験する / 試験に合格する",
+                placeholder="例：英検3級を受験する",
                 key="form_mid_free",
             )
 
@@ -1079,8 +1145,14 @@ elif st.session_state.page == PAGE_PLAN:
                     _mid,
                     "（未設定）",
                     date.today().isoformat(),
+                    material_id=material_id,
+                    month_plan=selected_month_str,
                 )
-                st.success(f"✅ 中計画「{_mid}」を保存しました！")
+                _yl = selected_month_str[:4]
+                _ml = int(selected_month_str[5:7])
+                st.success(
+                    f"✅ {_yl}年{_ml}月の中計画「{_mid}」を保存しました！"
+                )
                 st.session_state.plan_mode = None
                 st.rerun()
 
@@ -1137,7 +1209,13 @@ elif st.session_state.page == PAGE_PLAN:
             key="task_video_url",
         )
 
-        start_date = st.date_input("開始日", value=date.today(), key="task_start")
+        st.markdown("**📅 何日に行いますか？**")
+        start_date = st.date_input(
+            "実施日",
+            value=date.today(),
+            key="task_start",
+        )
+        st.caption("複数日に分ける場合は「何日分のタスクを作成しますか？」で対応します。")
         weekday_options = ["月", "火", "水", "木", "金", "土", "日"]
         jp_wd_to_int = {d: i for i, d in enumerate(weekday_options)}
         selected_weekdays = st.multiselect(
@@ -1166,8 +1244,8 @@ elif st.session_state.page == PAGE_PLAN:
                 current_date = start_date
                 total = 0
                 n_days = int(days)
-                vu = (video_url or "").strip() or None
-                pr = (page_range or "").strip() or None
+                vu = (video_url or "").strip()
+                pr = (page_range or "").strip()
                 for d in range(n_days):
                     while current_date.weekday() not in wd_set:
                         current_date += timedelta(days=1)
@@ -1192,7 +1270,10 @@ elif st.session_state.page == PAGE_PLAN:
     if user_plans.empty:
         st.info("計画データがありません。")
     else:
-        big_plan = user_plans["大計画"].iloc[0]
+        big_plan_list = (
+            user_plans["大計画"].dropna().astype(str).unique().tolist()
+        )
+        big_plan_list = [b for b in big_plan_list if str(b).strip()]
 
         def parse_mid(mid):
             s = str(mid).strip()
@@ -1201,50 +1282,99 @@ elif st.session_state.page == PAGE_PLAN:
                 return m.group(1).strip(), m.group(2).strip()
             return s, ""
 
-        st.markdown(f'<div class="plan-big">🎯 大計画：{big_plan}</div>', unsafe_allow_html=True)
+        for bi, big_plan in enumerate(big_plan_list):
+            group_df = user_plans[user_plans["大計画"] == big_plan]
+            deadline_val = (
+                group_df["deadline"].iloc[0]
+                if "deadline" in group_df.columns
+                else ""
+            )
+            deadline_label = ""
+            dv = str(deadline_val).strip() if deadline_val is not None else ""
+            if dv and len(dv) == 7 and dv[4] == "-":
+                deadline_label = (
+                    f"（期限：{dv[:4]}年{int(dv[5:7])}月）"
+                )
+            st.markdown(
+                f'<div class="plan-big">🎯 大計画：{big_plan} {deadline_label}</div>',
+                unsafe_allow_html=True,
+            )
 
-        mid_plans = user_plans["中計画"].unique()
-        for mid in mid_plans:
-            subject, goal = parse_mid(mid)
-            mid_tasks = user_plans[user_plans["中計画"] == mid]
-            total = len(mid_tasks)
-            done_count = int((mid_tasks["完了フラグ"].astype(int) == 1).sum())
-            progress = done_count / total if total > 0 else 0
-            label = f"{subject}" + (f"：{goal}" if goal else "")
-            st.markdown(f'<div class="plan-mid">📘 {label}　（{done_count}/{total} 完了）</div>', unsafe_allow_html=True)
-            st.progress(progress)
+            mid_plans = group_df["中計画"].unique()
+            for mj, mid in enumerate(mid_plans):
+                mid_group_df = group_df[group_df["中計画"] == mid]
+                mid_tasks = mid_group_df
+                month_val = (
+                    mid_group_df["month_plan"].iloc[0]
+                    if "month_plan" in mid_group_df.columns
+                    else ""
+                )
+                month_label = ""
+                mv = str(month_val).strip() if month_val is not None else ""
+                if mv and len(mv) == 7 and mv[4] == "-":
+                    month_label = f"【{mv[:4]}年{int(mv[5:7])}月】"
 
-            with st.expander(f"タスク一覧（{subject}）", expanded=False):
-                chk_changes = {}
-                for _, trow in mid_tasks.iterrows():
-                    t_done = int(trow["完了フラグ"]) == 1
-                    plan_id = int(trow["id"])
-                    col1, col2 = st.columns([4, 1])
-                    with col1:
-                        new_done = st.checkbox(
-                            f"{trow['小計画タスク']}　（{trow['日付']}）",
-                            value=t_done,
-                            key=f"plan_chk_{plan_id}"
-                        )
-                        if new_done != t_done:
-                            chk_changes[plan_id] = new_done
-                    with col2:
-                        if st.button("編集", key=f"plan_edit_{plan_id}"):
-                            edit_task_dialog(plan_id)
+                subject, goal = parse_mid(mid)
+                total = len(mid_tasks)
+                done_count = int((mid_tasks["完了フラグ"].astype(int) == 1).sum())
+                progress = done_count / total if total > 0 else 0
+                label = f"{subject}" + (f"：{goal}" if goal else "")
+                title_line = f"{month_label} {label}".strip()
+                st.markdown(
+                    f'<div class="plan-mid">📚 {title_line}　（{done_count}/{total} 完了）</div>',
+                    unsafe_allow_html=True,
+                )
+                st.progress(progress)
 
-                if chk_changes:
-                    if st.button("💾 チェックを保存", type="primary", key=f"save_chk_{mid}"):
-                        pt_delta = 0
-                        for pid, is_done_new in chk_changes.items():
-                            update_plan_row(pid, {"is_done": 1 if is_done_new else 0})
-                            pt_delta += TASK_TOGGLE_POINTS if is_done_new else -TASK_TOGGLE_POINTS
-                        new_pts = max(0, current_points + pt_delta)
-                        save_user_fields(selected_user, {"current_points": new_pts})
-                        st.toast("💾 保存しました！")
-                        st.rerun()
+                with st.expander(
+                    f"タスク一覧（{subject}）",
+                    expanded=False,
+                ):
+                    chk_changes = {}
+                    for _, trow in mid_tasks.iterrows():
+                        t_done = int(trow["完了フラグ"]) == 1
+                        plan_id = int(trow["id"])
+                        col1, col2 = st.columns([4, 1])
+                        with col1:
+                            new_done = st.checkbox(
+                                f"{trow['小計画タスク']}　（{trow['日付']}）",
+                                value=t_done,
+                                key=f"plan_chk_{plan_id}",
+                            )
+                            if new_done != t_done:
+                                chk_changes[plan_id] = new_done
+                        with col2:
+                            if st.button("編集", key=f"plan_edit_{plan_id}"):
+                                edit_task_dialog(plan_id)
 
-                if st.button(f"➕ タスク追加（{subject}）", key=f"add_task_{mid}"):
-                    add_task_dialog(mid, selected_user)
+                    if chk_changes:
+                        if st.button(
+                            "💾 チェックを保存",
+                            type="primary",
+                            key=f"save_chk_{bi}_{mj}",
+                        ):
+                            pt_delta = 0
+                            for pid, is_done_new in chk_changes.items():
+                                update_plan_row(
+                                    pid, {"is_done": 1 if is_done_new else 0}
+                                )
+                                pt_delta += (
+                                    TASK_TOGGLE_POINTS
+                                    if is_done_new
+                                    else -TASK_TOGGLE_POINTS
+                                )
+                            new_pts = max(0, current_points + pt_delta)
+                            save_user_fields(
+                                selected_user, {"current_points": new_pts}
+                            )
+                            st.toast("💾 保存しました！")
+                            st.rerun()
+
+                    if st.button(
+                        f"➕ タスク追加（{subject}）",
+                        key=f"add_task_{bi}_{mj}",
+                    ):
+                        add_task_dialog(mid, selected_user)
 
 # ==========================================================
 # ▼ 小テスト
