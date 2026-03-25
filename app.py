@@ -930,6 +930,14 @@ elif st.session_state.page == PAGE_SCHEDULE:
     if df_today.empty:
         st.info("🎉 今日のタスクはありません！")
     else:
+        df_users = load_users()
+        _un_col = "username" if "username" in df_users.columns else "ユーザー名"
+        _pts_col = (
+            "current_points"
+            if "current_points" in df_users.columns
+            else "現在ポイント"
+        )
+
         h0, h1, h2, h3, h4, h5 = st.columns([0.5, 4, 1.5, 1, 2, 1.5])
         with h1:
             st.caption("タスク名")
@@ -961,12 +969,10 @@ elif st.session_state.page == PAGE_SCHEDULE:
             )
 
             with col0:
-                checked = st.checkbox(
-                    "",
-                    value=bool(is_done),
-                    key=f"chk_sch_{plan_id}",
-                    disabled=bool(is_done),
-                )
+                if is_done:
+                    st.markdown("✅")
+                else:
+                    st.markdown("⬜")
 
             with col1:
                 if is_done:
@@ -1031,8 +1037,13 @@ elif st.session_state.page == PAGE_SCHEDULE:
                         type="primary",
                         use_container_width=True,
                     ):
+                        current_pts = int(
+                            df_users[df_users[_un_col] == selected_user][
+                                _pts_col
+                            ].iloc[0]
+                        )
+                        new_pts = current_pts + TASK_TOGGLE_POINTS
                         update_plan_row(plan_id, {"is_done": 1})
-                        new_pts = current_points + TASK_TOGGLE_POINTS
                         save_user_fields(
                             selected_user, {"current_points": new_pts}
                         )
@@ -1043,16 +1054,29 @@ elif st.session_state.page == PAGE_SCHEDULE:
                         st.rerun()
                 else:
                     st.markdown(
-                        '<span style="color:#00b894;">🎉 完了！</span>',
+                        '<span style="color:#00b894;font-size:12px;">🎉 完了！</span>',
                         unsafe_allow_html=True,
                     )
-
-            if not is_done and checked:
-                update_plan_row(plan_id, {"is_done": 1})
-                new_pts = current_points + TASK_TOGGLE_POINTS
-                save_user_fields(selected_user, {"current_points": new_pts})
-                st.toast(f"🎉 +{TASK_TOGGLE_POINTS}pt 獲得！", icon="🌟")
-                st.rerun()
+                    if st.button(
+                        "↩️ 戻す",
+                        key=f"undo_{plan_id}",
+                        use_container_width=True,
+                    ):
+                        current_pts = int(
+                            df_users[df_users[_un_col] == selected_user][
+                                _pts_col
+                            ].iloc[0]
+                        )
+                        new_pts = max(0, current_pts - TASK_TOGGLE_POINTS)
+                        update_plan_row(plan_id, {"is_done": 0})
+                        save_user_fields(
+                            selected_user, {"current_points": new_pts}
+                        )
+                        st.toast(
+                            "↩️ タスクを未完了に戻しました",
+                            icon="🔄",
+                        )
+                        st.rerun()
 
             st.divider()
 
