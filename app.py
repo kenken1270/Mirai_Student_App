@@ -422,6 +422,12 @@ def show_top_page():
             else:
                 st.error(t["login_error"])
 
+        st.markdown("---")
+        if st.button("👨‍🏫 管理者ログイン", key="admin_login_top"):
+            st.session_state.logged_in = True
+            st.session_state.login_user = ADMIN_OPTION
+            st.rerun()
+
 
 # ==========================================================
 # ▼ 共通データ読み込み
@@ -432,32 +438,48 @@ if not st.session_state.logged_in:
 
 selected_user = st.session_state.login_user
 
+st.markdown("""
+<style>
+    [data-testid="stSidebar"] { display: none; }
+    [data-testid="collapsedControl"] { display: none; }
+</style>
+""", unsafe_allow_html=True)
+
+if st.session_state.login_user == ADMIN_OPTION:
+    if "admin_ok" not in st.session_state:
+        st.session_state.admin_ok = False
+    if not st.session_state.admin_ok:
+        st.title("👨‍🏫 管理者ログイン")
+        pwd = st.text_input("パスワード", type="password", key="admin_pwd_top")
+        if st.button("ログイン", key="admin_login_btn"):
+            if pwd == ADMIN_PASSWORD:
+                st.session_state.admin_ok = True
+                st.rerun()
+            else:
+                st.error("パスワードが違います")
+        if st.button("← トップに戻る", key="back_to_top"):
+            st.session_state.logged_in = False
+            st.session_state.login_user = ""
+            st.session_state.admin_ok = False
+            st.rerun()
+        st.stop()
+
 df = load_users()
 df_plans = load_plans()
 
-st.sidebar.title("👤 ユーザー選択")
-st.sidebar.markdown("---")
-user_names = df["username"].tolist() if "username" in df.columns else df["ユーザー名"].tolist()
-options = user_names + [ADMIN_OPTION]
-_sidebar_idx = 0
-if st.session_state.login_user and st.session_state.login_user in options:
-    _sidebar_idx = options.index(st.session_state.login_user)
-selected_user = st.sidebar.selectbox("名前を選んでください", options=options, index=_sidebar_idx)
+# st.sidebar.title("👤 ユーザー選択")
+# st.sidebar.markdown("---")
+# user_names = df["username"].tolist() if "username" in df.columns else df["ユーザー名"].tolist()
+# options = user_names + [ADMIN_OPTION]
+# _sidebar_idx = 0
+# if st.session_state.login_user and st.session_state.login_user in options:
+#     _sidebar_idx = options.index(st.session_state.login_user)
+# selected_user = st.sidebar.selectbox("名前を選んでください", options=options, index=_sidebar_idx)
 
 # ==========================================================
 # ▼ 管理者画面
 # ==========================================================
 if selected_user == ADMIN_OPTION:
-    if "admin_ok" not in st.session_state:
-        st.session_state.admin_ok = False
-    pwd = st.sidebar.text_input("パスワード", type="password", key="admin_pwd")
-    if st.sidebar.button("ログイン", key="admin_login") and pwd == ADMIN_PASSWORD:
-        st.session_state.admin_ok = True
-        st.rerun()
-    if not st.session_state.admin_ok:
-        st.info("👨‍🏫 管理者を選択しました。パスワードを入力してログインしてください。")
-        st.stop()
-
     st.title("👨‍🏫 管理者画面")
     tab_dash, tab_content, tab_materials, tab_news = st.tabs(
         ["📊 生徒の進捗一覧", "📎 教材管理", "📚 教材マスター", "📢 お知らせ管理"]
