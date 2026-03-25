@@ -1628,12 +1628,12 @@ elif st.session_state.page == PAGE_PLAN:
                         st.session_state["cal_view_month"] -= 1
                     st.rerun()
             with col_title:
-                st.markdown(
-                    "<h4 style='text-align:center;margin:0;'>"
+                title_html = (
+                    f'<h4 style="text-align:center;margin:0;">'
                     f"📊 {view_year}年{view_month}月の計画サマリー"
-                    "</h4>",
-                    unsafe_allow_html=True,
+                    f"</h4>"
                 )
+                st.markdown(title_html, unsafe_allow_html=True)
             with col_next:
                 if st.button("次月 ▶", key="summary_next"):
                     if view_month == 12:
@@ -1676,25 +1676,17 @@ elif st.session_state.page == PAGE_PLAN:
                             f"　⏰ 期限：{_dv[:4]}年{int(_dv[5:7])}月"
                         )
 
-                    st.markdown(
-                        f"""
-            <div style='
-                background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-                color: white;
-                padding: 8px 16px;
-                border-radius: 8px;
-                margin: 8px 0 4px 0;
-                font-weight: bold;
-            '>
-            🎯 {big}{deadline_label}
-            &nbsp;&nbsp;
-            <span style='font-size:12px;font-weight:normal;'>
-                {done_tasks}/{total_tasks}タスク完了
-            </span>
-            </div>
-            """,
-                        unsafe_allow_html=True,
+                    big_header_html = (
+                        f'<div style="background:linear-gradient(90deg,#667eea 0%,#764ba2 100%);'
+                        f'color:white;padding:8px 16px;border-radius:8px;'
+                        f'margin:8px 0 4px 0;font-weight:bold;">'
+                        f"🎯 {big}{deadline_label}"
+                        f"&nbsp;&nbsp;"
+                        f'<span style="font-size:12px;font-weight:normal;">'
+                        f"{done_tasks}/{total_tasks}タスク完了"
+                        f"</span></div>"
                     )
+                    st.markdown(big_header_html, unsafe_allow_html=True)
                     st.progress(progress)
 
                     mid_plans_month = [
@@ -1732,27 +1724,16 @@ elif st.session_state.page == PAGE_PLAN:
                                 break
 
                         with mid_cols[i % len(mid_cols)]:
-                            st.markdown(
-                                f"""
-                    <div style='
-                        border-left: 4px solid {card_color};
-                        background: #f8f9fa;
-                        padding: 8px 12px;
-                        border-radius: 0 8px 8px 0;
-                        margin: 4px 2px;
-                        font-size: 13px;
-                    '>
-                        <b>📚 {mid}</b><br>
-                        <span style='color:#636e72;font-size:11px;'>
-                            {month_label}
-                        </span><br>
-                        <span style='color:#2d3436;'>
-                            {mid_done}/{mid_total} タスク
-                        </span>
-                    </div>
-                    """,
-                                unsafe_allow_html=True,
+                            card_html = (
+                                f'<div style="border-left:4px solid {card_color};'
+                                f'background:#f8f9fa;padding:8px 12px;'
+                                f'border-radius:0 8px 8px 0;margin:4px 2px;font-size:13px;">'
+                                f"<b>📚 {mid}</b><br>"
+                                f'<span style="color:#636e72;font-size:11px;">{month_label}</span><br>'
+                                f'<span style="color:#2d3436;">{mid_done}/{mid_total} タスク</span>'
+                                f"</div>"
                             )
+                            st.markdown(card_html, unsafe_allow_html=True)
                             st.progress(mid_prog)
 
             st.markdown("---")
