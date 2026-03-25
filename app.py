@@ -991,8 +991,8 @@ elif st.session_state.page == PAGE_PLAN:
 
     if "task_added_list" not in st.session_state:
         st.session_state["task_added_list"] = []
-    if "task_next_date" not in st.session_state:
-        st.session_state["task_next_date"] = date.today()
+    if "task_input_next_date" not in st.session_state:
+        st.session_state["task_input_next_date"] = date.today()
 
     df_plans = load_plans()
     df_plans["日付"] = df_plans["日付"].astype(str).str[:10]
@@ -1410,8 +1410,8 @@ elif st.session_state.page == PAGE_PLAN:
         st.markdown("**📅 何日に行いますか？**")
         start_date = st.date_input(
             "実施日",
-            value=st.session_state["task_next_date"],
-            key="task_start",
+            value=st.session_state["task_input_next_date"],
+            key="task_date_input",
         )
         st.caption("複数日に分ける場合は「何日分のタスクを作成しますか？」で対応します。")
         weekday_options = ["月", "火", "水", "木", "金", "土", "日"]
@@ -1470,9 +1470,11 @@ elif st.session_state.page == PAGE_PLAN:
                         "count": total,
                     }
                 )
-                st.session_state["task_next_date"] = last_date + timedelta(days=1)
-                if "task_start" in st.session_state:
-                    st.session_state["task_start"] = st.session_state["task_next_date"]
+                st.session_state["task_input_next_date"] = last_date + timedelta(days=1)
+                if "task_date_input" in st.session_state:
+                    st.session_state["task_date_input"] = st.session_state[
+                        "task_input_next_date"
+                    ]
                 st.rerun()
 
         if st.session_state["task_added_list"]:
@@ -1500,9 +1502,11 @@ elif st.session_state.page == PAGE_PLAN:
             ):
                 st.session_state.plan_mode = None
                 st.session_state["task_added_list"] = []
-                st.session_state["task_next_date"] = date.today()
-                if "task_start" in st.session_state:
-                    st.session_state["task_start"] = st.session_state["task_next_date"]
+                st.session_state["task_input_next_date"] = date.today()
+                if "task_date_input" in st.session_state:
+                    st.session_state["task_date_input"] = st.session_state[
+                        "task_input_next_date"
+                    ]
                 st.rerun()
         with col_clear:
             if st.button(
