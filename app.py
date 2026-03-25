@@ -122,6 +122,38 @@ def get_supabase() -> Client:
     key = st.secrets["supabase"]["key"]
     return create_client(url, key)
 
+
+@st.cache_data(ttl=30)
+def load_events(username: str) -> pd.DataFrame:
+    sb = get_supabase()
+    res = sb.table("events").select("*").eq("username", username).execute()
+    df = pd.DataFrame(res.data) if res.data else pd.DataFrame(
+        columns=["id", "username", "event_name", "event_date", "event_type", "note"]
+    )
+    for col, default in [("event_type", "exam"), ("note", "")]:
+        if col not in df.columns:
+            df[col] = default
+    return df
+
+
+def insert_event(username, event_name, event_date, event_type="exam", note=""):
+    sb = get_supabase()
+    sb.table("events").insert({
+        "username": username,
+        "event_name": event_name,
+        "event_date": event_date,
+        "event_type": event_type,
+        "note": note,
+    }).execute()
+    st.cache_data.clear()
+
+
+def delete_event(event_id):
+    sb = get_supabase()
+    sb.table("events").delete().eq("id", event_id).execute()
+    st.cache_data.clear()
+
+
 def today_str():
     return date.today().isoformat()
 
@@ -1718,6 +1750,30 @@ elif st.session_state.page == PAGE_PLAN:
                 except Exception:
                     continue
 
+            # ── イベント（試験・行事）をカレンダーに追加 ──
+            EVENT_COLOR_MAP = {
+                "exam": {"color": "#E17055", "icon": "📝"},  # 試験・検定
+                "deadline": {"color": "#FDCB6E", "icon": "⏰"},  # 締切・願書
+                "event": {"color": "#6C5CE7", "icon": "🎉"},  # 行事・イベント
+                "other": {"color": "#A29BFE", "icon": "📌"},  # その他
+            }
+
+            df_events = load_events(selected_user)
+            for _, ev in df_events.iterrows():
+                etype = str(ev.get("event_type", "other"))
+                meta = EVENT_COLOR_MAP.get(etype, EVENT_COLOR_MAP["other"])
+                events.append({
+                    "title": meta["icon"] + " " + str(ev["event_name"]),
+                    "start": str(ev["event_date"])[:10],
+                    "end": str(ev["event_date"])[:10],
+                    "color": meta["color"],
+                    "extendedProps": {
+                        "type": "event",
+                        "etype": etype,
+                        "note": str(ev.get("note", "")),
+                    },
+                })
+
             calendar_options = {
                 "editable": False,
                 "selectable": True,
@@ -1892,13 +1948,117 @@ elif st.session_state.page == PAGE_PLAN:
             if cal_result and cal_result.get("eventClick"):
                 clicked = cal_result["eventClick"]["event"]
                 props = clicked.get("extendedProps", {})
-                done_txt = "✅ 完了済み" if props.get("is_done") else "⬜ 未完了"
-                st.info(
-                    f"📖 **{clicked['title']}**\n\n"
-                    f"📚 中計画：{props.get('mid_plan', '')}\n\n"
-                    f"📄 ページ範囲：{props.get('page_range', '')}\n\n"
-                    f"{done_txt}"
+                if props.get("type") == "event":
+                    et = props.get("etype", "")
+                    nt = props.get("note", "") or ""
+                    st.info(
+                        f"📌 **{clicked['title']}**\n\n"
+                        f"種別：`{et}`\n\n"
+                        + (f"📝 {nt}\n\n" if nt else "")
+                    )
+                else:
+                    done_txt = "✅ 完了済み" if props.get("is_done") else "⬜ 未完了"
+                    st.info(
+                        f"📖 **{clicked['title']}**\n\n"
+                        f"📚 中計画：{props.get('mid_plan', '')}\n\n"
+                        f"📄 ページ範囲：{props.get('page_range', '')}\n\n"
+                        f"{done_txt}"
+                    )
+
+            st.markdown("---")
+
+            # ── イベント管理 ──
+            with st.expander("📌 イベント・試験日を管理する", expanded=False):
+
+                # ── 追加フォーム ──
+                st.markdown("**➕ 新しいイベントを追加**")
+                ev_col1, ev_col2, ev_col3 = st.columns([3, 2, 2])
+
+                with ev_col1:
+                    ev_name = st.text_input(
+                        "イベント名",
+                        placeholder="例：英検3級 / 漢検4級 / 願書提出締切",
+                        key="ev_name",
+                    )
+                with ev_col2:
+                    ev_date = st.date_input("日付", value=date.today(), key="ev_date")
+                with ev_col3:
+                    ev_type = st.selectbox(
+                        "種別",
+                        ["exam", "deadline", "event", "other"],
+                        format_func=lambda x: {
+                            "exam": "📝 試験・検定",
+                            "deadline": "⏰ 締切・願書",
+                            "event": "🎉 行事・イベント",
+                            "other": "📌 その他",
+                        }[x],
+                        key="ev_type",
+                    )
+
+                ev_note = st.text_input(
+                    "メモ（任意）",
+                    placeholder="例：準会場：〇〇中学校 / 9:30集合",
+                    key="ev_note",
                 )
+
+                if st.button("📌 カレンダーに追加", type="primary", key="ev_add"):
+                    if not ev_name:
+                        st.warning("イベント名を入力してください")
+                    else:
+                        insert_event(
+                            selected_user,
+                            ev_name,
+                            ev_date.isoformat(),
+                            ev_type,
+                            ev_note,
+                        )
+                        st.success(f"✅ 「{ev_name}」を{ev_date}に追加しました！")
+                        st.rerun()
+
+                st.markdown("---")
+
+                # ── 登録済みイベント一覧 ──
+                st.markdown("**📋 登録済みイベント一覧**")
+                df_ev_list = load_events(selected_user)
+
+                if df_ev_list.empty:
+                    st.caption("登録されたイベントはありません")
+                else:
+                    # 日付順に並べ替え
+                    df_ev_list = df_ev_list.sort_values("event_date")
+
+                    for _, ev_row in df_ev_list.iterrows():
+                        etype = str(ev_row.get("event_type", "other"))
+                        meta = EVENT_COLOR_MAP.get(etype, EVENT_COLOR_MAP["other"])
+                        ev_id = ev_row["id"]
+                        ev_dt = str(ev_row["event_date"])[:10]
+                        ev_note_val = str(ev_row.get("note", ""))
+
+                        list_col1, list_col2, list_col3 = st.columns([4, 2, 1])
+                        with list_col1:
+                            st.markdown(
+                                f'<span style="background:{meta["color"]};'
+                                f'color:white;padding:1px 6px;border-radius:4px;'
+                                f'font-size:11px;">{meta["icon"]} '
+                                f'{"試験" if etype == "exam" else "締切" if etype == "deadline" else "行事" if etype == "event" else "その他"}'
+                                f'</span> **{ev_row["event_name"]}**'
+                                + (
+                                    f'　<span style="color:#636e72;font-size:12px;">{ev_note_val}</span>'
+                                    if ev_note_val and ev_note_val != "nan"
+                                    else ""
+                                ),
+                                unsafe_allow_html=True,
+                            )
+                        with list_col2:
+                            st.caption(f"📅 {ev_dt}")
+                        with list_col3:
+                            if st.button(
+                                "🗑️",
+                                key=f"del_ev_{ev_id}",
+                                help="このイベントを削除",
+                            ):
+                                delete_event(ev_id)
+                                st.rerun()
 
             st.markdown("---")
             cols_legend = st.columns(len(color_map) + 1)
@@ -1908,6 +2068,22 @@ elif st.session_state.page == PAGE_PLAN:
                     st.markdown(
                         f'<span style="background:{color};padding:2px 8px;'
                         f'border-radius:4px;font-size:12px;color:white;">{subject}</span>',
+                        unsafe_allow_html=True,
+                    )
+
+            st.markdown("**イベント種別：**")
+            legend_event_items = [
+                ("📝 試験・検定", "#E17055"),
+                ("⏰ 締切・願書", "#FDCB6E"),
+                ("🎉 行事", "#6C5CE7"),
+                ("📌 その他", "#A29BFE"),
+            ]
+            cols_ev = st.columns(len(legend_event_items))
+            for i, (label, color) in enumerate(legend_event_items):
+                with cols_ev[i]:
+                    st.markdown(
+                        f'<span style="background:{color};padding:2px 8px;'
+                        f'border-radius:4px;font-size:12px;color:white;">{label}</span>',
                         unsafe_allow_html=True,
                     )
 
