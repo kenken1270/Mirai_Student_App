@@ -154,6 +154,60 @@ def delete_event(event_id):
     st.cache_data.clear()
 
 
+@st.cache_data(ttl=60)
+def load_master_events() -> pd.DataFrame:
+    sb = get_supabase()
+    res = (
+        sb.table("master_events")
+        .select("*")
+        .eq("is_active", True)
+        .order("event_date")
+        .execute()
+    )
+    return pd.DataFrame(res.data) if res.data else pd.DataFrame(
+        columns=["id", "event_name", "event_date", "event_type", "note", "is_active"]
+    )
+
+
+def bulk_insert_events_to_all_users(master_event_ids: list):
+    """指定したmaster_eventsを全生徒に一括配布"""
+    sb = get_supabase()
+    df_users = load_users()
+    df_master = load_master_events()
+
+    for _, user_row in df_users.iterrows():
+        username = (
+            user_row["username"]
+            if "username" in user_row.index
+            else user_row["ユーザー名"]
+        )
+        if username == ADMIN_OPTION:
+            continue
+        for mid in master_event_ids:
+            ev = df_master[df_master["id"] == mid]
+            if len(ev) == 0:
+                continue
+            ev = ev.iloc[0]
+            # 既に同じイベントが登録済みでないか確認
+            existing = (
+                sb.table("events")
+                .select("id")
+                .eq("username", username)
+                .eq("event_name", str(ev["event_name"]))
+                .eq("event_date", str(ev["event_date"])[:10])
+                .execute()
+            )
+            if not existing.data:
+                sb.table("events").insert({
+                    "username": username,
+                    "event_name": str(ev["event_name"]),
+                    "event_date": str(ev["event_date"])[:10],
+                    "event_type": str(ev.get("event_type", "exam")),
+                    "note": str(ev.get("note", "")),
+                }).execute()
+    st.cache_data.clear()
+
+
 def today_str():
     return date.today().isoformat()
 
@@ -565,8 +619,14 @@ df_plans = load_plans()
 # ==========================================================
 if selected_user == ADMIN_OPTION:
     st.title("👨‍🏫 管理者画面")
-    tab_dash, tab_content, tab_materials, tab_news = st.tabs(
-        ["📊 生徒の進捗一覧", "📎 教材管理", "📚 教材マスター", "📢 お知らせ管理"]
+    tab_dash, tab_content, tab_materials, tab_news, tab5 = st.tabs(
+        [
+            "📊 生徒の進捗一覧",
+            "📎 教材管理",
+            "📚 教材マスター",
+            "📢 お知らせ管理",
+            "📅 イベント一括配布",
+        ]
     )
 
     with tab_dash:
@@ -751,6 +811,67 @@ if selected_user == ADMIN_OPTION:
             if st.button("キャンセル", key="news_cancel_btn"):
                 st.session_state["news_adding"] = False
                 st.rerun()
+
+    with tab5:
+        st.markdown("### 📅 英検・漢検 日程一括配布")
+        st.info(
+            "チェックを入れたイベントを全生徒のカレンダーに一括登録します。"
+            "不要なイベントは各生徒が自分で削除できます。"
+        )
+
+        df_master = load_master_events()
+
+        if df_master.empty:
+            st.warning(
+                "マスターイベントが登録されていません。"
+                "Supabaseのmaster_eventsテーブルを確認してください。"
+            )
+        else:
+            EVENT_TYPE_LABEL = {
+                "exam": "📝 試験・検定日",
+                "deadline": "⏰ 申込締切日",
+                "event": "🎉 行事・イベント",
+                "other": "📌 その他",
+            }
+
+            selected_ids = []
+
+            for etype, group_df in df_master.groupby("event_type"):
+                st.markdown(f"**{EVENT_TYPE_LABEL.get(etype, etype)}**")
+                for _, ev_row in group_df.iterrows():
+                    ev_id = int(ev_row["id"])
+                    ev_date = str(ev_row["event_date"])[:10]
+                    ev_note = str(ev_row.get("note", ""))
+                    label = f"{ev_date}　{ev_row['event_name']}"
+                    if ev_note and ev_note != "nan":
+                        label += f"　({ev_note})"
+                    checked = st.checkbox(
+                        label, value=True, key=f"master_ev_{ev_id}"
+                    )
+                    if checked:
+                        selected_ids.append(ev_id)
+
+            st.markdown("---")
+            col_bulk1, col_bulk2 = st.columns([3, 1])
+            with col_bulk1:
+                st.markdown(
+                    f"選択中：**{len(selected_ids)}件** のイベントを全生徒に配布します"
+                )
+            with col_bulk2:
+                if st.button(
+                    "🚀 全生徒に一括配布",
+                    type="primary",
+                    use_container_width=True,
+                ):
+                    if not selected_ids:
+                        st.warning("少なくとも1件選択してください")
+                    else:
+                        with st.spinner("配布中..."):
+                            bulk_insert_events_to_all_users(selected_ids)
+                        st.success(
+                            f"✅ {len(selected_ids)}件のイベントを全生徒に配布しました！"
+                        )
+                        st.balloons()
 
     st.stop()
 
