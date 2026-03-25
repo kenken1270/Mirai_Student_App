@@ -184,12 +184,18 @@ def update_plan_row(plan_id: int, update_dict: dict):
     st.cache_data.clear()
 
 def insert_plan_row(username: str, big_plan: str, mid_plan: str,
-                    task_name: str, task_date: str):
+                    task_name: str, task_date: str,
+                    video_url: str | None = None, page_range: str | None = None):
     sb = get_supabase()
-    sb.table("plans").insert({
+    row = {
         "username": username, "big_plan": big_plan, "mid_plan": mid_plan,
         "task_name": task_name, "task_date": task_date, "is_done": 0,
-    }).execute()
+    }
+    if video_url is not None:
+        row["video_url"] = video_url
+    if page_range is not None:
+        row["page_range"] = page_range
+    sb.table("plans").insert(row).execute()
     st.cache_data.clear()
 
 def delete_plan_row(plan_id: int):
@@ -350,146 +356,6 @@ def add_task_dialog(mid_plan, selected_user):
         if st.button("キャンセル", key="dialog_add_cancel"):
             st.rerun()
 
-WIZARD_SUBJECT_FILTERS = ["全教科", "国語", "算数", "理科", "社会"]
-WIZARD_WEEKDAY_LABELS = ["月", "火", "水", "木", "金", "土", "日"]
-WIZARD_JP_WEEKDAY_TO_INT = {d: i for i, d in enumerate(WIZARD_WEEKDAY_LABELS)}
-WIZARD_TIME_SLOTS = ["朝", "昼", "夕方", "夜"]
-
-
-def _wizard_assign_dates(start: date, n: int, weekday_set: set[int]) -> list[date]:
-    """学習日のみを順に n 日分返す（開始日以降）。"""
-    out: list[date] = []
-    d = start
-    while len(out) < n:
-        if d.weekday() in weekday_set:
-            out.append(d)
-        d += timedelta(days=1)
-    return out
-
-
-@st.dialog("新しい計画を立てる")
-def plan_wizard_dialog(selected_user: str):
-    subj_col, name_col, toc_col = "教科", "教材名", "目次データ"
-
-    st.markdown("#### ステップ1：大計画を設定")
-    big_plan_input = st.text_input(
-        "大計画（目標）を入力してください",
-        placeholder="例：2027年2月 私立中学合格！",
-        key="wiz_big_plan",
-    )
-
-    st.markdown("#### ステップ2：教材を選ぶ")
-    df_m = load_materials()
-    mat_row = None
-    unit_options: list[tuple[str, str]] = []
-    unit_labels: list[str] = []
-
-    if df_m.empty:
-        st.warning("教材データがありません。")
-    else:
-        subj_filter = st.selectbox("教科で絞り込み", WIZARD_SUBJECT_FILTERS, key="wiz_subj_filter")
-        if subj_filter == "全教科" or subj_col not in df_m.columns:
-            df_f = df_m
-        else:
-            df_f = df_m[df_m[subj_col] == subj_filter]
-        if df_f.empty:
-            st.warning("その教科の教材がありません。")
-        else:
-            mat_idx = st.selectbox(
-                "教材を選ぶ",
-                list(range(len(df_f))),
-                format_func=lambda i: str(df_f.iloc[int(i)][name_col]),
-                key="wiz_mat_select",
-            )
-            mat_row = df_f.iloc[int(mat_idx)]
-
-    if mat_row is not None:
-        st.markdown("#### ステップ3：単元（中計画）を選ぶ")
-        toc_raw = mat_row.get(toc_col, "[]")
-        try:
-            toc_list = json.loads(toc_raw) if isinstance(toc_raw, str) else toc_raw
-        except (json.JSONDecodeError, TypeError):
-            toc_list = []
-        if not isinstance(toc_list, list):
-            toc_list = []
-        unit_options = []
-        unit_labels = []
-        for item in toc_list:
-            if isinstance(item, dict):
-                un = str(item.get("単元名", "")).strip()
-                pg = str(item.get("ページ範囲", "-")).strip() or "-"
-            else:
-                un = str(item).strip()
-                pg = "-"
-            if not un:
-                continue
-            unit_options.append((un, pg))
-            unit_labels.append(f"{un}（{pg}）")
-        if not unit_labels:
-            st.caption("この教材に目次データがありません。管理者が目次を登録してください。")
-        selected_unit_labels = st.multiselect(
-            "単元（複数選択可）",
-            unit_labels,
-            key="wiz_units",
-        )
-    else:
-        selected_unit_labels = []
-
-    st.markdown("#### ステップ4：スケジュールを設定")
-    start_d = st.date_input("開始日", value=date.today(), key="wiz_start")
-    time_slot = st.selectbox(
-        "1日あたりの学習時間帯",
-        WIZARD_TIME_SLOTS,
-        key="wiz_time_slot",
-    )
-    weekdays_sel = st.multiselect(
-        "週の学習日",
-        WIZARD_WEEKDAY_LABELS,
-        default=["月", "火", "水", "木", "金"],
-        key="wiz_weekdays",
-    )
-
-    if st.button("📅 計画を作成する", type="primary", key="wiz_submit"):
-        if not big_plan_input or not str(big_plan_input).strip():
-            st.warning("大計画を入力してください。")
-            return
-        if mat_row is None:
-            st.warning("教材を選んでください。")
-            return
-        if not selected_unit_labels:
-            st.warning("単元を1つ以上選んでください。")
-            return
-        if not weekdays_sel:
-            st.warning("週の学習日を1つ以上選んでください。")
-            return
-
-        label_to_pair = dict(zip(unit_labels, unit_options))
-        selected_pairs = [label_to_pair[lb] for lb in selected_unit_labels if lb in label_to_pair]
-        if not selected_pairs:
-            st.warning("単元を1つ以上選んでください。")
-            return
-
-        wd_set = {WIZARD_JP_WEEKDAY_TO_INT[w] for w in weekdays_sel}
-        dates_assigned = _wizard_assign_dates(start_d, len(selected_pairs), wd_set)
-        subj_val = str(mat_row.get(subj_col, "")).strip() or "—"
-        mat_name = str(mat_row.get(name_col, "")).strip() or "—"
-        mid_plan = f"[{subj_val}] {mat_name}"
-        big = big_plan_input.strip()
-
-        for (un, pg), task_d in zip(selected_pairs, dates_assigned):
-            task_name = f"{un}（{pg}）【{time_slot}】"
-            insert_plan_row(
-                username=selected_user,
-                big_plan=big,
-                mid_plan=mid_plan,
-                task_name=task_name,
-                task_date=task_d.isoformat(),
-            )
-        st.session_state["plan_wizard_success"] = (
-            f"✅ {len(selected_pairs)}個のタスクを登録しました！"
-        )
-        st.rerun()
-
 # ==========================================================
 # ▼ セッション状態初期化
 # ==========================================================
@@ -503,6 +369,8 @@ if "lang" not in st.session_state:
     st.session_state.lang = "ja"
 if "login_user" not in st.session_state:
     st.session_state.login_user = ""
+if "plan_mode" not in st.session_state:
+    st.session_state.plan_mode = None
 
 
 def show_top_page():
@@ -1080,13 +948,246 @@ elif st.session_state.page == PAGE_SCHEDULE:
 # ==========================================================
 elif st.session_state.page == PAGE_PLAN:
     st.markdown("## 🗺️ 計画確認")
-    if "plan_wizard_success" in st.session_state:
-        st.success(st.session_state.pop("plan_wizard_success"))
-    if st.button("➕ 新しい計画を立てる", key="open_plan_wizard"):
-        plan_wizard_dialog(selected_user)
-    df_plans_all = load_plans()
-    df_plans_all["日付"] = df_plans_all["日付"].astype(str).str[:10]
-    user_plans = df_plans_all[df_plans_all["ユーザー名"] == selected_user].copy()
+
+    df_plans = load_plans()
+    df_plans["日付"] = df_plans["日付"].astype(str).str[:10]
+
+    btn_c1, btn_c2, btn_c3 = st.columns(3)
+    with btn_c1:
+        if st.button("🎯 大計画を作る", use_container_width=True, key="btn_plan_big"):
+            st.session_state.plan_mode = "big"
+    with btn_c2:
+        if st.button("📚 中計画を作る", use_container_width=True, key="btn_plan_mid"):
+            st.session_state.plan_mode = "mid"
+    with btn_c3:
+        if st.button("✏️ タスクを追加する", use_container_width=True, key="btn_plan_task"):
+            st.session_state.plan_mode = "task"
+
+    _pm = st.session_state.get("plan_mode")
+
+    if _pm == "big":
+        _cl1, _cl2 = st.columns([6, 1])
+        with _cl2:
+            if st.button("閉じる", key="plan_close_big"):
+                st.session_state.plan_mode = None
+                st.rerun()
+        st.subheader("🎯 大計画を作る")
+        big_plan_input = st.text_input(
+            "大計画（目標）を入力してください",
+            placeholder="例：2027年2月 私立中学合格！",
+            key="form_big_plan_text",
+        )
+        if st.button("✅ 大計画を保存", key="form_big_save"):
+            if not big_plan_input or not str(big_plan_input).strip():
+                st.warning("目標を入力してください")
+            else:
+                insert_plan_row(
+                    selected_user,
+                    big_plan_input.strip(),
+                    "",
+                    "（未設定）",
+                    date.today().isoformat(),
+                )
+                st.success(f"✅ 大計画「{big_plan_input.strip()}」を保存しました！")
+                st.session_state.plan_mode = None
+                st.rerun()
+
+    elif _pm == "mid":
+        _cm1, _cm2 = st.columns([6, 1])
+        with _cm2:
+            if st.button("閉じる", key="plan_close_mid_top"):
+                st.session_state.plan_mode = None
+                st.rerun()
+        st.subheader("📚 中計画を作る")
+
+        existing_big_plans = (
+            df_plans[df_plans["ユーザー名"] == selected_user]["大計画"]
+            .dropna()
+            .astype(str)
+            .unique()
+            .tolist()
+        )
+        existing_big_plans = [b for b in existing_big_plans if b.strip()]
+        if not existing_big_plans:
+            st.warning("先に大計画を作成してください。")
+            selected_big = None
+        else:
+            selected_big = st.selectbox(
+                "どの大計画に追加しますか？",
+                existing_big_plans,
+                key="form_mid_big",
+            )
+
+        mid_type = st.radio(
+            "中計画の種類",
+            ["📚 教材から選ぶ", "✏️ 自由入力"],
+            horizontal=True,
+            key="form_mid_type",
+        )
+
+        df_materials = load_materials()
+        subj_col = "教科" if "教科" in df_materials.columns else "subject"
+        name_col = "教材名" if "教材名" in df_materials.columns else "material_name"
+
+        mid_plan_input = ""
+        if mid_type == "📚 教材から選ぶ":
+            if df_materials.empty:
+                st.warning("教材データがありません。")
+            else:
+                subs = sorted(
+                    df_materials[subj_col].dropna().astype(str).unique().tolist()
+                )
+                subject_filter = st.selectbox(
+                    "教科",
+                    ["全教科"] + subs,
+                    key="form_mid_subject",
+                )
+                filtered = (
+                    df_materials
+                    if subject_filter == "全教科"
+                    else df_materials[df_materials[subj_col] == subject_filter]
+                )
+                if filtered.empty:
+                    st.warning("該当する教材がありません。")
+                else:
+                    names = filtered[name_col].astype(str).tolist()
+                    selected_material = st.selectbox(
+                        "教材名（本のタイトル）を選んでください",
+                        names,
+                        key="form_mid_material",
+                    )
+                    mid_plan_input = selected_material
+        else:
+            mid_plan_input = st.text_input(
+                "中計画を自由入力してください",
+                placeholder="例：英検3級を受験する / 試験に合格する",
+                key="form_mid_free",
+            )
+
+        if st.button("✅ 中計画を保存", key="form_mid_save"):
+            _mid = (
+                mid_plan_input.strip()
+                if isinstance(mid_plan_input, str)
+                else str(mid_plan_input).strip()
+            )
+            if not selected_big or not _mid:
+                st.warning("大計画と中計画を入力してください")
+            else:
+                insert_plan_row(
+                    selected_user,
+                    selected_big,
+                    _mid,
+                    "（未設定）",
+                    date.today().isoformat(),
+                )
+                st.success(f"✅ 中計画「{_mid}」を保存しました！")
+                st.session_state.plan_mode = None
+                st.rerun()
+
+    elif _pm == "task":
+        _ct1, _ct2 = st.columns([6, 1])
+        with _ct2:
+            if st.button("閉じる", key="plan_close_task_top"):
+                st.session_state.plan_mode = None
+                st.rerun()
+        st.subheader("✏️ タスクを追加する")
+
+        df_user_plans = df_plans[df_plans["ユーザー名"] == selected_user]
+        big_plans = (
+            df_user_plans["大計画"].dropna().astype(str).unique().tolist()
+        )
+        big_plans = [b for b in big_plans if b.strip()]
+        if not big_plans:
+            st.warning("先に大計画を作成してください。")
+            selected_big_for_task = None
+            selected_mid_for_task = None
+        else:
+            selected_big_for_task = st.selectbox(
+                "大計画を選んでください",
+                big_plans,
+                key="task_big",
+            )
+            mid_plans = df_user_plans[
+                df_user_plans["大計画"] == selected_big_for_task
+            ]["中計画"].dropna().astype(str).unique().tolist()
+            mid_plans = [m for m in mid_plans if m.strip()]
+            if not mid_plans:
+                st.warning("この大計画に中計画がありません。先に中計画を追加してください。")
+                selected_mid_for_task = None
+            else:
+                selected_mid_for_task = st.selectbox(
+                    "中計画を選んでください",
+                    mid_plans,
+                    key="task_mid",
+                )
+
+        task_name = st.text_input(
+            "タスク名",
+            placeholder="例：計算ドリル P.1-5 を解く",
+            key="task_name_input",
+        )
+        page_range = st.text_input(
+            "ページ範囲（任意）",
+            placeholder="例：P.1-5",
+            key="task_page_range",
+        )
+        video_url = st.text_input(
+            "動画URL（任意）",
+            placeholder="https://youtube.com/...",
+            key="task_video_url",
+        )
+
+        start_date = st.date_input("開始日", value=date.today(), key="task_start")
+        weekday_options = ["月", "火", "水", "木", "金", "土", "日"]
+        jp_wd_to_int = {d: i for i, d in enumerate(weekday_options)}
+        selected_weekdays = st.multiselect(
+            "学習曜日",
+            weekday_options,
+            default=["月", "火", "水", "木", "金"],
+            key="task_weekdays",
+        )
+        days = st.number_input(
+            "何日分のタスクを作成しますか？",
+            min_value=1,
+            max_value=30,
+            value=1,
+            key="task_days",
+        )
+
+        if st.button("✅ タスクを保存", key="form_task_save"):
+            if not task_name or not str(task_name).strip():
+                st.warning("タスク名を入力してください")
+            elif not selected_big_for_task or not selected_mid_for_task:
+                st.warning("大計画と中計画を選んでください")
+            elif not selected_weekdays:
+                st.warning("学習曜日を1つ以上選んでください")
+            else:
+                wd_set = {jp_wd_to_int[w] for w in selected_weekdays if w in jp_wd_to_int}
+                current_date = start_date
+                total = 0
+                n_days = int(days)
+                vu = (video_url or "").strip() or None
+                pr = (page_range or "").strip() or None
+                for d in range(n_days):
+                    while current_date.weekday() not in wd_set:
+                        current_date += timedelta(days=1)
+                    suffix = f" ({d + 1}/{n_days})" if n_days > 1 else ""
+                    insert_plan_row(
+                        selected_user,
+                        selected_big_for_task,
+                        selected_mid_for_task,
+                        str(task_name).strip() + suffix,
+                        current_date.isoformat(),
+                        video_url=vu,
+                        page_range=pr,
+                    )
+                    current_date += timedelta(days=1)
+                    total += 1
+                st.success(f"✅ {total}個のタスクを登録しました！")
+                st.session_state.plan_mode = None
+                st.rerun()
+
+    user_plans = df_plans[df_plans["ユーザー名"] == selected_user].copy()
 
     if user_plans.empty:
         st.info("計画データがありません。")
