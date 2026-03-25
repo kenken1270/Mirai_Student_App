@@ -618,7 +618,18 @@ df_plans = load_plans()
 # ▼ 管理者画面
 # ==========================================================
 if selected_user == ADMIN_OPTION:
-    st.title("👨‍🏫 管理者画面")
+    # 管理者ログアウトボタン（右上に配置）
+    col_admin_title, col_admin_logout = st.columns([8, 1])
+    with col_admin_title:
+        st.markdown("## 🏫 管理者画面")
+    with col_admin_logout:
+        if st.button("🚪 ログアウト", key="admin_logout", use_container_width=True):
+            st.session_state.logged_in = False
+            st.session_state.login_user = ""
+            st.session_state.admin_ok = False
+            st.session_state.page = PAGE_HOME
+            st.rerun()
+
     tab_dash, tab_content, tab_materials, tab_news, tab5 = st.tabs(
         [
             "📊 生徒の進捗一覧",
