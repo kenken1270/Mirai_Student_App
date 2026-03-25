@@ -989,6 +989,11 @@ elif st.session_state.page == PAGE_SCHEDULE:
 elif st.session_state.page == PAGE_PLAN:
     st.markdown("## 🗺️ 計画確認")
 
+    if "task_added_list" not in st.session_state:
+        st.session_state["task_added_list"] = []
+    if "task_next_date" not in st.session_state:
+        st.session_state["task_next_date"] = date.today()
+
     df_plans = load_plans()
     df_plans["日付"] = df_plans["日付"].astype(str).str[:10]
 
@@ -1405,7 +1410,7 @@ elif st.session_state.page == PAGE_PLAN:
         st.markdown("**📅 何日に行いますか？**")
         start_date = st.date_input(
             "実施日",
-            value=date.today(),
+            value=st.session_state["task_next_date"],
             key="task_start",
         )
         st.caption("複数日に分ける場合は「何日分のタスクを作成しますか？」で対応します。")
@@ -1425,7 +1430,7 @@ elif st.session_state.page == PAGE_PLAN:
             key="task_days",
         )
 
-        if st.button("✅ タスクを保存", key="form_task_save"):
+        if st.button("➕ タスクを追加", type="primary", key="form_task_add"):
             if not task_name or not str(task_name).strip():
                 st.warning("タスク名を入力してください")
             elif not selected_big_for_task or not selected_mid_for_task:
@@ -1437,6 +1442,7 @@ elif st.session_state.page == PAGE_PLAN:
                 current_date = start_date
                 total = 0
                 n_days = int(days)
+                last_date = start_date
                 vu = (video_url or "").strip()
                 pr = (page_range or "").strip()
                 for d in range(n_days):
@@ -1452,10 +1458,59 @@ elif st.session_state.page == PAGE_PLAN:
                         video_url=vu,
                         page_range=pr,
                     )
+                    last_date = current_date
                     current_date += timedelta(days=1)
                     total += 1
-                st.success(f"✅ {total}個のタスクを登録しました！")
+
+                st.session_state["task_added_list"].append(
+                    {
+                        "date": last_date.strftime("%m/%d"),
+                        "task": str(task_name).strip(),
+                        "page": pr,
+                        "count": total,
+                    }
+                )
+                st.session_state["task_next_date"] = last_date + timedelta(days=1)
+                if "task_start" in st.session_state:
+                    st.session_state["task_start"] = st.session_state["task_next_date"]
+                st.rerun()
+
+        if st.session_state["task_added_list"]:
+            st.markdown("---")
+            st.markdown("**📋 追加済みタスク（今回のセッション）**")
+            for item in st.session_state["task_added_list"]:
+                page_str = f"　📄 {item['page']}" if item.get("page") else ""
+                cnt = item.get("count", 1)
+                count_str = f"　×{cnt}日" if cnt > 1 else ""
+                st.success(
+                    f"✅ {item['date']}　{item['task']}{page_str}{count_str}"
+                )
+            st.markdown(
+                f"**合計 {sum(i['count'] for i in st.session_state['task_added_list'])} 件追加済み**"
+            )
+
+        st.markdown("---")
+        col_done, col_clear = st.columns([3, 1])
+        with col_done:
+            if st.button(
+                "🏁 入力を完了して閉じる",
+                type="primary",
+                use_container_width=True,
+                key="form_task_done_close",
+            ):
                 st.session_state.plan_mode = None
+                st.session_state["task_added_list"] = []
+                st.session_state["task_next_date"] = date.today()
+                if "task_start" in st.session_state:
+                    st.session_state["task_start"] = st.session_state["task_next_date"]
+                st.rerun()
+        with col_clear:
+            if st.button(
+                "🗑️ ログをクリア",
+                use_container_width=True,
+                key="form_task_clear_log",
+            ):
+                st.session_state["task_added_list"] = []
                 st.rerun()
 
     user_plans = df_plans[df_plans["ユーザー名"] == selected_user].copy()
