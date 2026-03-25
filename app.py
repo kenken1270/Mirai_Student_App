@@ -31,6 +31,9 @@ st.set_page_config(
 
 ADMIN_OPTION = "👨‍🏫 管理者"
 ADMIN_PASSWORD = "admin"
+STUDENT_PASSWORD = "mirai2026"
+LANG_JA = "ja"
+LANG_ZH = "zh"
 COL_LAST_LOGIN = "last_login_date"
 COL_LAST_VISIT = "last_visit_date"
 COL_STREAK = "streak"
@@ -54,6 +57,55 @@ OPTION_TO_PAGE = {
 PAGE_TO_OPTION = {
     PAGE_HOME: "ホーム", PAGE_SCHEDULE: "📅 今日の学習", PAGE_PLAN: "計画確認",
     PAGE_STUDY: "📅 今日の学習", PAGE_TEST: "小テスト", PAGE_GACHA: "ガチャ",
+}
+
+TEXTS = {
+    "ja": {
+        "school_name": "未来塾",
+        "catchcopy": "楽しく学んで、未来を切り開こう！",
+        "select_name": "名前を選んでください",
+        "password": "パスワード",
+        "login_btn": "ログイン",
+        "login_error": "パスワードが違います",
+        "news_title": "📢 お知らせ",
+        "lang_btn": "中文",
+        "logout_btn": "ログアウト",
+        "nav_home": "ホーム",
+        "nav_study": "📅 今日の学習",
+        "nav_plan": "計画確認",
+        "nav_test": "小テスト",
+        "nav_gacha": "ガチャ",
+        "streak": "連続",
+        "streak_unit": "日目！",
+        "mood": "今日の気分は？",
+        "mood_good": "元気！",
+        "mood_normal": "ふつう",
+        "mood_sleepy": "眠い...",
+        "admin": "👨‍🏫 管理者",
+    },
+    "zh": {
+        "school_name": "未来塾",
+        "catchcopy": "快乐学习，开创未来！",
+        "select_name": "请选择姓名",
+        "password": "密码",
+        "login_btn": "登录",
+        "login_error": "密码错误",
+        "news_title": "📢 通知",
+        "lang_btn": "日本語",
+        "logout_btn": "退出登录",
+        "nav_home": "主页",
+        "nav_study": "📅 今日的学习",
+        "nav_plan": "计划确认",
+        "nav_test": "小测验",
+        "nav_gacha": "扭蛋机",
+        "streak": "连续",
+        "streak_unit": "天！",
+        "mood": "今天心情怎么样？",
+        "mood_good": "很好！",
+        "mood_normal": "一般",
+        "mood_sleepy": "犯困...",
+        "admin": "👨‍🏫 管理员",
+    },
 }
 
 # ==========================================================
@@ -305,10 +357,81 @@ if "page" not in st.session_state:
     st.session_state.page = PAGE_HOME
 if "toast_shown" not in st.session_state:
     st.session_state.toast_shown = False
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+if "lang" not in st.session_state:
+    st.session_state.lang = "ja"
+if "login_user" not in st.session_state:
+    st.session_state.login_user = ""
+
+
+def show_top_page():
+    lang = st.session_state.lang
+    t = TEXTS[lang]
+
+    _, col_lang = st.columns([4, 1])
+    with col_lang:
+        if st.button(t["lang_btn"], key="lang_toggle"):
+            st.session_state.lang = LANG_ZH if lang == LANG_JA else LANG_JA
+            st.rerun()
+
+    st.markdown(f"""
+    <div style="text-align:center; padding: 2rem 0;">
+        <div style="font-size: 4rem;">🌟</div>
+        <h1 style="font-size: 3rem; color: #f9a825; font-weight: bold;">
+            {t["school_name"]}
+        </h1>
+        <p style="font-size: 1.3rem; color: #555; margin-top: 0.5rem;">
+            {t["catchcopy"]}
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    df_news = load_news()
+    if "target_user" not in df_news.columns:
+        df_news["target_user"] = "全員"
+    news_all = df_news[df_news["target_user"] == "全員"]
+    if len(news_all) > 0:
+        st.markdown(f"### {t['news_title']}")
+        for _, row in news_all.iterrows():
+            st.warning("⚠️ " + str(row.get("メッセージ", "")), icon="📢")
+        st.markdown("---")
+
+    st.markdown("""
+    <div style="max-width: 400px; margin: 0 auto;">
+        <h2 style="text-align:center; color: #f9a825;">🔐 Login</h2>
+    </div>
+    """, unsafe_allow_html=True)
+
+    df_u = load_users()
+    username_col = "username" if "username" in df_u.columns else "ユーザー名"
+    user_list = df_u[username_col].tolist()
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        selected = st.selectbox(t["select_name"], user_list, key="top_user_select")
+        password = st.text_input(t["password"], type="password", key="top_password")
+        if st.button(t["login_btn"], type="primary", use_container_width=True, key="top_login_btn"):
+            if password == STUDENT_PASSWORD:
+                st.session_state.logged_in = True
+                st.session_state.login_user = selected
+                st.session_state.page = PAGE_HOME
+                st.rerun()
+            else:
+                st.error(t["login_error"])
+
 
 # ==========================================================
 # ▼ 共通データ読み込み
 # ==========================================================
+if not st.session_state.logged_in:
+    show_top_page()
+    st.stop()
+
+selected_user = st.session_state.login_user
+
 df = load_users()
 df_plans = load_plans()
 
@@ -316,7 +439,10 @@ st.sidebar.title("👤 ユーザー選択")
 st.sidebar.markdown("---")
 user_names = df["username"].tolist() if "username" in df.columns else df["ユーザー名"].tolist()
 options = user_names + [ADMIN_OPTION]
-selected_user = st.sidebar.selectbox("名前を選んでください", options=options, index=0)
+_sidebar_idx = 0
+if st.session_state.login_user and st.session_state.login_user in options:
+    _sidebar_idx = options.index(st.session_state.login_user)
+selected_user = st.sidebar.selectbox("名前を選んでください", options=options, index=_sidebar_idx)
 
 # ==========================================================
 # ▼ 管理者画面
@@ -601,6 +727,21 @@ st.markdown("""
 _, header_col = st.columns([3, 1])
 with header_col:
     st.markdown(f'<p class="header-right">こんにちは、{selected_user}さん！　現在のポイント：<strong>{current_points}pt</strong></p>', unsafe_allow_html=True)
+
+lang = st.session_state.lang
+t = TEXTS[lang]
+
+btn_col1, btn_col2 = st.columns([1, 1])
+with btn_col1:
+    if st.button(t["lang_btn"], key="lang_toggle_main"):
+        st.session_state.lang = LANG_ZH if lang == LANG_JA else LANG_JA
+        st.rerun()
+with btn_col2:
+    if st.button(t["logout_btn"], key="logout_btn"):
+        st.session_state.logged_in = False
+        st.session_state.login_user = ""
+        st.session_state.page = PAGE_HOME
+        st.rerun()
 
 if st.session_state.page == PAGE_HOME and not st.session_state.toast_shown:
     st.toast(f"こんにちは、{selected_user}さん！")
