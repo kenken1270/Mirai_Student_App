@@ -1027,6 +1027,24 @@ elif st.session_state.page == PAGE_TEST:
 # ==========================================================
 elif st.session_state.page == PAGE_GACHA:
     st.markdown("## 🎰 ガチャ")
+    st.markdown("""
+<div style="text-align: center; padding: 3rem 1rem;
+            background: linear-gradient(135deg, #f5f5f5, #eeeeee);
+            border-radius: 16px; margin: 2rem 0;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+    <div style="font-size: 4rem;">🎰</div>
+    <h2 style="color: #9e9e9e; font-size: 2rem; margin: 1rem 0;">
+        準備中...
+    </h2>
+    <p style="color: #bdbdbd; font-size: 1.2rem;">
+        ガチャ機能は現在準備中です。<br>
+        もうしばらくお待ちください！
+    </p>
+</div>
+""", unsafe_allow_html=True)
+    st.stop()
+
+    st.markdown("## 🎰 ガチャ")
     st.markdown(f"現在のポイント：**{current_points}pt**　（ガチャ1回：{GACHA_COST}pt）")
     GACHA_TABLE = [
         {"rank": "URレア", "label": "🌟 URレア！　特別賞", "css": "gacha-result-urare", "prob": 5},
