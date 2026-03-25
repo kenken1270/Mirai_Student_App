@@ -1086,13 +1086,17 @@ elif st.session_state.page == PAGE_PLAN:
 
         mid_plan_input = ""
         material_id = ""
+        mid_page_range = ""
         if mid_type == "📚 教材から選ぶ":
             df_materials = load_materials()
             subj_col = "教科" if "教科" in df_materials.columns else "subject"
             name_col = "教材名" if "教材名" in df_materials.columns else "material_name"
             id_col = "id" if "id" in df_materials.columns else "ID"
+            toc_col = (
+                "目次データ" if "目次データ" in df_materials.columns else "toc_data"
+            )
             if df_materials.empty:
-                st.warning("教材データがありません。")
+                st.warning("教材が登録されていません")
             else:
                 subs = sorted(
                     df_materials[subj_col].dropna().astype(str).unique().tolist()
@@ -1107,8 +1111,8 @@ elif st.session_state.page == PAGE_PLAN:
                     if subject_filter == "全教科"
                     else df_materials[df_materials[subj_col] == subject_filter]
                 )
-                if filtered.empty:
-                    st.warning("該当する教材がありません。")
+                if len(filtered) == 0:
+                    st.warning("教材が登録されていません")
                 else:
                     names = filtered[name_col].astype(str).tolist()
                     selected_material = st.selectbox(
@@ -1117,24 +1121,112 @@ elif st.session_state.page == PAGE_PLAN:
                         key="form_mid_material",
                     )
                     mid_plan_input = selected_material
-                    _rows = filtered[filtered[name_col]
-                                    == selected_material]
-                    if len(_rows) > 0:
-                        material_id = str(
-                            _rows.iloc[0].get(id_col, "") or ""
+                    mat_row = filtered[filtered[name_col] == selected_material].iloc[0]
+                    material_id = str(mat_row.get(id_col, "") or "")
+
+                    toc_list: list = []
+                    try:
+                        toc_raw = mat_row.get(toc_col, "[]")
+                        toc_list = (
+                            json.loads(toc_raw)
+                            if isinstance(toc_raw, str)
+                            else toc_raw
+                        )
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        toc_list = []
+                    if not isinstance(toc_list, list):
+                        toc_list = []
+                    toc_list = [t for t in toc_list if isinstance(t, dict)]
+
+                    st.markdown("**📄 どこまで進めますか？（ページ範囲）**")
+                    range_mode = st.radio(
+                        "ページ範囲の指定方法",
+                        ["📋 目次から選ぶ", "✏️ 手入力"],
+                        horizontal=True,
+                        key="mid_range_mode",
+                    )
+
+                    if range_mode == "📋 目次から選ぶ" and toc_list:
+                        toc_labels = [
+                            f"{t.get('単元名', '')}"
+                            + (
+                                f"（{t.get('ページ範囲', '')}）"
+                                if t.get("ページ範囲")
+                                else ""
+                            )
+                            for t in toc_list
+                        ]
+                        col_s, col_e = st.columns(2)
+                        with col_s:
+                            start_idx = st.selectbox(
+                                "開始（どこから）",
+                                range(len(toc_labels)),
+                                format_func=lambda i: toc_labels[i],
+                                key="mid_toc_start",
+                            )
+                        with col_e:
+                            _end_opts = list(
+                                range(int(start_idx), len(toc_labels))
+                            )
+                            if not _end_opts:
+                                _end_opts = [0]
+                            end_idx = st.selectbox(
+                                "終了（どこまで）",
+                                _end_opts,
+                                format_func=lambda i: toc_labels[i],
+                                key="mid_toc_end",
+                            )
+                        start_page = str(
+                            toc_list[int(start_idx)].get("ページ範囲", "")
+                        ).strip()
+                        end_page = str(
+                            toc_list[int(end_idx)].get("ページ範囲", "")
+                        ).strip()
+                        mid_page_range = (
+                            f"{start_page}〜{end_page}"
+                            if start_page and end_page
+                            else ""
+                        )
+                        if mid_page_range:
+                            st.info(
+                                f"📄 範囲：{toc_labels[int(start_idx)]} 〜 "
+                                f"{toc_labels[int(end_idx)]}（{mid_page_range}）"
+                            )
+                    elif range_mode == "📋 目次から選ぶ" and not toc_list:
+                        st.caption(
+                            "この教材には目次データがありません。"
+                            "手入力で指定してください。"
+                        )
+                        mid_page_range = st.text_input(
+                            "ページ範囲を入力",
+                            placeholder="例：P.1〜P.30",
+                            key="mid_page_manual",
+                        )
+                    else:
+                        mid_page_range = st.text_input(
+                            "ページ範囲を入力",
+                            placeholder="例：P.1〜P.30",
+                            key="mid_page_manual2",
                         )
         else:
             mid_plan_input = st.text_input(
                 "中計画を自由入力してください",
-                placeholder="例：英検3級を受験する",
+                placeholder="例：英検3級を受験する / 試験に合格する",
                 key="form_mid_free",
             )
+            material_id = ""
+            mid_page_range = ""
 
         if st.button("✅ 中計画を保存", key="form_mid_save"):
             _mid = (
                 mid_plan_input.strip()
                 if isinstance(mid_plan_input, str)
                 else str(mid_plan_input).strip()
+            )
+            _pr = (
+                str(mid_page_range).strip()
+                if mid_page_range is not None
+                else ""
             )
             if not selected_big or not _mid:
                 st.warning("大計画と中計画を入力してください")
@@ -1147,6 +1239,7 @@ elif st.session_state.page == PAGE_PLAN:
                     date.today().isoformat(),
                     material_id=material_id,
                     month_plan=selected_month_str,
+                    page_range=_pr,
                 )
                 _yl = selected_month_str[:4]
                 _ml = int(selected_month_str[5:7])
@@ -1169,6 +1262,8 @@ elif st.session_state.page == PAGE_PLAN:
             df_user_plans["大計画"].dropna().astype(str).unique().tolist()
         )
         big_plans = [b for b in big_plans if b.strip()]
+        mid_plans_df = pd.DataFrame()
+        task_toc_list: list = []
         if not big_plans:
             st.warning("先に大計画を作成してください。")
             selected_big_for_task = None
@@ -1179,12 +1274,18 @@ elif st.session_state.page == PAGE_PLAN:
                 big_plans,
                 key="task_big",
             )
-            mid_plans = df_user_plans[
+            mid_plans_df = df_user_plans[
                 df_user_plans["大計画"] == selected_big_for_task
-            ]["中計画"].dropna().astype(str).unique().tolist()
-            mid_plans = [m for m in mid_plans if m.strip()]
+            ]
+            mid_plans = [
+                m
+                for m in mid_plans_df["中計画"].dropna().astype(str).unique().tolist()
+                if m.strip() and m != "（未設定）"
+            ]
             if not mid_plans:
-                st.warning("この大計画に中計画がありません。先に中計画を追加してください。")
+                st.warning(
+                    "この大計画に中計画がありません。先に中計画を追加してください。"
+                )
                 selected_mid_for_task = None
             else:
                 selected_mid_for_task = st.selectbox(
@@ -1193,20 +1294,97 @@ elif st.session_state.page == PAGE_PLAN:
                     key="task_mid",
                 )
 
-        task_name = st.text_input(
-            "タスク名",
-            placeholder="例：計算ドリル P.1-5 を解く",
-            key="task_name_input",
-        )
-        page_range = st.text_input(
-            "ページ範囲（任意）",
-            placeholder="例：P.1-5",
-            key="task_page_range",
-        )
+            if selected_mid_for_task is not None and len(mid_plans_df) > 0:
+                try:
+                    sub_mid = mid_plans_df[
+                        mid_plans_df["中計画"] == selected_mid_for_task
+                    ]
+                    mat_id_val = None
+                    if "material_id" in sub_mid.columns and len(sub_mid) > 0:
+                        for v in sub_mid["material_id"].values:
+                            if pd.notna(v) and str(v).strip():
+                                mat_id_val = v
+                                break
+                    if mat_id_val:
+                        df_mat = load_materials()
+                        id_m = "id" if "id" in df_mat.columns else "ID"
+                        toc_m = (
+                            "目次データ"
+                            if "目次データ" in df_mat.columns
+                            else "toc_data"
+                        )
+                        mat_match = df_mat[
+                            df_mat[id_m].astype(str) == str(mat_id_val)
+                        ]
+                        if len(mat_match) > 0:
+                            toc_raw = mat_match.iloc[0].get(toc_m, "[]")
+                            task_toc_list = (
+                                json.loads(toc_raw)
+                                if isinstance(toc_raw, str)
+                                else toc_raw
+                            )
+                except (json.JSONDecodeError, TypeError, ValueError, KeyError):
+                    task_toc_list = []
+                if not isinstance(task_toc_list, list):
+                    task_toc_list = []
+                task_toc_list = [t for t in task_toc_list if isinstance(t, dict)]
+
+        st.markdown("**📝 タスク名を設定してください**")
+        if len(task_toc_list) == 0:
+            task_input_mode = "✏️ 自由入力"
+        else:
+            task_input_mode = st.radio(
+                "入力方法",
+                ["📋 目次から選ぶ", "✏️ 自由入力"],
+                horizontal=True,
+                key="task_input_mode",
+            )
+
+        if task_input_mode == "📋 目次から選ぶ" and task_toc_list:
+            toc_labels_task = [
+                f"{t.get('単元名', '')}"
+                + (f"（{t.get('ページ範囲', '')}）" if t.get("ページ範囲") else "")
+                for t in task_toc_list
+            ]
+            selected_toc_idx = st.selectbox(
+                "単元を選んでください",
+                range(len(toc_labels_task)),
+                format_func=lambda i: toc_labels_task[i],
+                key="task_toc_select",
+            )
+            _tn = str(
+                task_toc_list[int(selected_toc_idx)].get("単元名", "")
+            ).strip()
+            _pr = str(
+                task_toc_list[int(selected_toc_idx)].get("ページ範囲", "")
+            ).strip()
+            st.info(f"📖 {_tn}　📄 {_pr}")
+            task_name = st.text_input(
+                "タスク名（変更可）",
+                value=_tn,
+                key="task_name_override",
+            )
+            page_range = st.text_input(
+                "ページ範囲（変更可）",
+                value=_pr,
+                key="task_page_override",
+            )
+        else:
+            task_name = st.text_input(
+                "タスク名",
+                placeholder="例：計算ドリル P.1-5 を解く",
+                key="task_name_free",
+            )
+            page_range = st.text_input(
+                "ページ範囲（任意）",
+                placeholder="例：P.1-5",
+                key="task_page_free",
+            )
+
         video_url = st.text_input(
             "動画URL（任意）",
             placeholder="https://youtube.com/...",
-            key="task_video_url",
+            key="task_video",
         )
 
         st.markdown("**📅 何日に行いますか？**")
