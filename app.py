@@ -799,17 +799,6 @@ if st.session_state.page == PAGE_HOME:
 
     st.markdown("## ホーム")
 
-    df_news = load_news()
-    df_news_mine = df_news[
-        (df_news["target_user"] == "全員") | (df_news["target_user"] == selected_user)
-    ]
-    if len(df_news_mine) > 0:
-        with st.container():
-            st.markdown("### 📢 お知らせ")
-            for _, row in df_news_mine.iterrows():
-                st.warning("⚠️ " + row.get("メッセージ", ""), icon="📢")
-            st.markdown("---")
-
     st.markdown(f'<p style="font-size: 2rem; font-weight: bold; color: #e65100;">🔥 連続 {streak}日目！</p>', unsafe_allow_html=True)
     recent_set = set(d.strip() for d in recent_login_dates.split(",") if d.strip())
     today_iso = date.today().isoformat()
@@ -840,6 +829,17 @@ if st.session_state.page == PAGE_HOME:
             st.markdown(f'<p style="text-align:center; font-size:0.9rem; color:#666;">{day_infos[idx2]["weekday"]}</p>', unsafe_allow_html=True)
     st.caption("🔥＝達成済み　⚪＝未達成　✨＝今日")
     st.markdown("")
+
+    df_news = load_news()
+    df_news_mine = df_news[
+        (df_news["target_user"] == "全員") | (df_news["target_user"] == selected_user)
+    ]
+    if len(df_news_mine) > 0:
+        with st.container():
+            st.markdown("### 📢 お知らせ")
+            for _, row in df_news_mine.iterrows():
+                st.warning("⚠️ " + row.get("メッセージ", ""), icon="📢")
+            st.markdown("---")
 
     if last_login == today:
         st.markdown("### 今日の気分　登録済み")
