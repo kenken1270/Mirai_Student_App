@@ -1039,21 +1039,6 @@ st.markdown("""
         color: #EEEEEE !important;
     }
 }
-
-/* ── スマホ対応：ヒートマップを横並びに ── */
-@media (max-width: 640px) {
-    /* 縦長ヒートマップを横スクロール対応に */
-    .heatmap-row {
-        display: flex !important;
-        flex-direction: row !important;
-        overflow-x: auto !important;
-        gap: 6px !important;
-        padding: 8px 0 !important;
-    }
-    .heatmap-row-cell {
-        min-width: 40px;
-    }
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1124,60 +1109,53 @@ if st.session_state.page == PAGE_HOME:
         unsafe_allow_html=True,
     )
 
-    recent_set = set(
-        d.strip() for d in recent_login_dates.split(",") if d.strip()
-    )
+    st.markdown("**📅 直近7日間**")
 
-    st.markdown("**直近7日間**")
-    heatmap_data = []
-    for i in range(6, -1, -1):
-        d = date.today() - timedelta(days=i)
-        d_str = d.strftime("%m/%d")
-        d_label = ["月", "火", "水", "木", "金", "土", "日"][d.weekday()]
-        logged = d.isoformat() in recent_set
-        is_today = d == date.today()
+    # user_row はこのブロック内の streak 更新後に古いままなので、直近ログイン文字列は recent_login_dates を使う
+    try:
+        _recent = str(recent_login_dates)
+    except Exception:
+        _recent = ""
 
-        if is_today:
-            icon = "✨"
-            bg = "#FFF9C4"
-            border = "2px solid #F0C040"
-        elif logged:
-            icon = "🔥"
-            bg = "#FF8C00"
-            border = "none"
-        else:
-            icon = ""
-            bg = "#e0e0e0"
-            border = "none"
-
-        heatmap_data.append({
-            "date": d_str,
-            "label": d_label,
-            "icon": icon,
-            "bg": bg,
-            "border": border,
+    _days = []
+    for _i in range(6, -1, -1):
+        _d = date.today() - timedelta(days=_i)
+        _logged = _d.isoformat() in _recent
+        _is_today = _d == date.today()
+        _days.append({
+            "date": _d.strftime("%m/%d"),
+            "week": ["月", "火", "水", "木", "金", "土", "日"][_d.weekday()],
+            "logged": _logged,
+            "today": _is_today,
         })
 
-    cols = st.columns(7)
-    for i, item in enumerate(heatmap_data):
-        with cols[i]:
-            st.markdown(
-                f'<div class="heatmap-row-cell" style="'
-                f'background:{item["bg"]};'
-                f'border:{item["border"]};'
-                f'border-radius:8px;'
-                f'text-align:center;'
-                f'padding:6px 2px;'
-                f'font-size:18px;'
-                f'">'
-                f'{item["icon"]}<br>'
-                f'<span style="font-size:10px;color:#555;">{item["date"]}</span><br>'
-                f'<span style="font-size:10px;color:#888;">{item["label"]}</span>'
-                f"</div>",
-                unsafe_allow_html=True,
-            )
+    _cells = ""
+    for _item in _days:
+        if _item["today"]:
+            _bg, _icon, _fc = "#FFF176", "✨", "#333"
+        elif _item["logged"]:
+            _bg, _icon, _fc = "#FF8C00", "🔥", "#fff"
+        else:
+            _bg, _icon, _fc = "#e0e0e0", "　", "#888"
 
-    st.caption("🔥=達成済み　⬜=未達成　✨=今日")
+        _cells += (
+            f'<div style="'
+            f"background:{_bg};border-radius:8px;"
+            f"text-align:center;padding:6px 0;flex:1;min-width:0;"
+            f'">'
+            f'<div style="font-size:16px;line-height:1.2;">{_icon}</div>'
+            f'<div style="font-size:9px;color:{_fc};">{_item["date"]}</div>'
+            f'<div style="font-size:9px;color:{_fc};">{_item["week"]}</div>'
+            f"</div>"
+        )
+
+    st.markdown(
+        f'<div style="display:flex;flex-direction:row;gap:4px;width:100%;">'
+        f"{_cells}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+    st.caption("🔥達成　⬜未達成　✨今日")
     st.markdown("---")
 
     df_news = load_news()
