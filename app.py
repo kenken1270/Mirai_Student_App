@@ -72,6 +72,8 @@ COL_RECENT_LOGINS = "recent_login_dates"
 GACHA_COST = 50
 TASK_TOGGLE_POINTS = 10
 
+FLASH_APP_URL = "https://mirai-flash.streamlit.app"
+
 PAGE_HOME = "home"
 PAGE_STUDY = "study"
 PAGE_TEST = "test"
@@ -1157,6 +1159,13 @@ if st.session_state.page == PAGE_HOME:
     )
     st.caption("🔥達成　⬜未達成　✨今日")
     st.markdown("---")
+
+    st.link_button(
+        "📖 単語暗記アプリを開く",
+        FLASH_APP_URL,
+        use_container_width=True,
+        type="primary",
+    )
 
     df_news = load_news()
     df_news_mine = df_news[
