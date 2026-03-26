@@ -1002,6 +1002,58 @@ st.markdown("""
     .streak-cell.achieved { background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); color: #fff; font-size: 1.8rem; font-weight: bold; box-shadow: 0 4px 12px rgba(245,124,0,0.4); }
     .streak-cell.today-empty { background: #fff8e1; color: #f9a825; font-size: 1.2rem; }
     .streak-cell.empty { color: #9e9e9e; }
+
+/* ── ダークモード対応：ナビゲーションバー ── */
+@media (prefers-color-scheme: dark) {
+
+    /* ナビゲーションのボタンテキストを白に */
+    .stButton > button {
+        color: #FFFFFF !important;
+        border-color: #555555 !important;
+    }
+
+    /* 選択中のナビボタンを黄色ベースに */
+    .stButton > button[kind="primary"] {
+        background-color: #F0C040 !important;
+        color: #1a1a1a !important;
+    }
+
+    /* カード・ボックス系の背景 */
+    div[data-testid="stExpander"] {
+        background-color: #2d2d2d !important;
+        border-color: #444 !important;
+    }
+
+    /* ナビバー（option_menu使用時）のダーク対応 */
+    .nav-link {
+        color: #EEEEEE !important;
+    }
+    .nav-link.active {
+        background-color: #F0C040 !important;
+        color: #1a1a1a !important;
+    }
+
+    /* お知らせカードのダーク対応 */
+    .stAlert {
+        background-color: #3a3a2a !important;
+        color: #EEEEEE !important;
+    }
+}
+
+/* ── スマホ対応：ヒートマップを横並びに ── */
+@media (max-width: 640px) {
+    /* 縦長ヒートマップを横スクロール対応に */
+    .heatmap-row {
+        display: flex !important;
+        flex-direction: row !important;
+        overflow-x: auto !important;
+        gap: 6px !important;
+        padding: 8px 0 !important;
+    }
+    .heatmap-row-cell {
+        min-width: 40px;
+    }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1066,37 +1118,67 @@ if st.session_state.page == PAGE_HOME:
         recent_login_dates = new_recent
 
     st.markdown("## ホーム")
+    st.markdown(
+        f'<p style="font-size: 2rem; font-weight: bold; color: #e65100;">'
+        f"🔥 連続 {streak}日目！</p>",
+        unsafe_allow_html=True,
+    )
 
-    st.markdown(f'<p style="font-size: 2rem; font-weight: bold; color: #e65100;">🔥 連続 {streak}日目！</p>', unsafe_allow_html=True)
-    recent_set = set(d.strip() for d in recent_login_dates.split(",") if d.strip())
-    today_iso = date.today().isoformat()
-    weekdays_ja = ["月", "火", "水", "木", "金", "土", "日"]
-    day_infos = []
-    for i in range(6, -1, -1):
-        d = (date.today() - timedelta(days=i)).isoformat()
-        is_today = d == today_iso
-        achieved = d in recent_set
-        if achieved:
-            icon = "🔥"; label = "今日" if is_today else d[5:].replace("-", "/"); css_class = "streak-cell achieved"
-        elif is_today:
-            icon = "✨"; label = "今日"; css_class = "streak-cell today-empty"
-        else:
-            icon = "⚪"; label = d[5:].replace("-", "/"); css_class = "streak-cell empty"
-        wd = date.fromisoformat(d).weekday()
-        day_infos.append({"date": d, "icon": icon, "label": label, "css": css_class, "weekday": weekdays_ja[wd]})
+    recent_set = set(
+        d.strip() for d in recent_login_dates.split(",") if d.strip()
+    )
 
     st.markdown("**直近7日間**")
+    heatmap_data = []
+    for i in range(6, -1, -1):
+        d = date.today() - timedelta(days=i)
+        d_str = d.strftime("%m/%d")
+        d_label = ["月", "火", "水", "木", "金", "土", "日"][d.weekday()]
+        logged = d.isoformat() in recent_set
+        is_today = d == date.today()
+
+        if is_today:
+            icon = "✨"
+            bg = "#FFF9C4"
+            border = "2px solid #F0C040"
+        elif logged:
+            icon = "🔥"
+            bg = "#FF8C00"
+            border = "none"
+        else:
+            icon = ""
+            bg = "#e0e0e0"
+            border = "none"
+
+        heatmap_data.append({
+            "date": d_str,
+            "label": d_label,
+            "icon": icon,
+            "bg": bg,
+            "border": border,
+        })
+
     cols = st.columns(7)
-    for idx2, col in enumerate(cols):
-        with col:
-            info = day_infos[idx2]
-            st.markdown(f'<div class="{info["css"]}"><span style="display:block;">{info["icon"]}</span><span style="display:block; font-size: 0.85rem;">{info["label"]}</span></div>', unsafe_allow_html=True)
-    cols_w = st.columns(7)
-    for idx2, col in enumerate(cols_w):
-        with col:
-            st.markdown(f'<p style="text-align:center; font-size:0.9rem; color:#666;">{day_infos[idx2]["weekday"]}</p>', unsafe_allow_html=True)
-    st.caption("🔥＝達成済み　⚪＝未達成　✨＝今日")
-    st.markdown("")
+    for i, item in enumerate(heatmap_data):
+        with cols[i]:
+            st.markdown(
+                f'<div class="heatmap-row-cell" style="'
+                f'background:{item["bg"]};'
+                f'border:{item["border"]};'
+                f'border-radius:8px;'
+                f'text-align:center;'
+                f'padding:6px 2px;'
+                f'font-size:18px;'
+                f'">'
+                f'{item["icon"]}<br>'
+                f'<span style="font-size:10px;color:#555;">{item["date"]}</span><br>'
+                f'<span style="font-size:10px;color:#888;">{item["label"]}</span>'
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+    st.caption("🔥=達成済み　⬜=未達成　✨=今日")
+    st.markdown("---")
 
     df_news = load_news()
     df_news_mine = df_news[
@@ -1107,7 +1189,6 @@ if st.session_state.page == PAGE_HOME:
             st.markdown("### 📢 お知らせ")
             for _, row in df_news_mine.iterrows():
                 st.warning("⚠️ " + row.get("メッセージ", ""), icon="📢")
-            st.markdown("---")
 
     if last_login == today:
         st.markdown("### 今日の気分　登録済み")
