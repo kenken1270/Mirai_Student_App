@@ -1159,13 +1159,14 @@ if st.session_state.page == PAGE_HOME:
     )
     st.caption("🔥達成　⬜未達成　✨今日")
     st.markdown("---")
-
+    st.markdown("**📖 単語練習**")
     st.link_button(
-        "📖 単語暗記アプリを開く",
+        "🚀 単語暗記アプリを開く",
         FLASH_APP_URL,
         use_container_width=True,
         type="primary",
     )
+    st.markdown("---")
 
     df_news = load_news()
     df_news_mine = df_news[
