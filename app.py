@@ -236,6 +236,73 @@ def bulk_insert_events_to_all_users(master_event_ids: list):
     st.cache_data.clear()
 
 
+@st.cache_data(ttl=30)
+def load_review_logs_by_date(target: str) -> pd.DataFrame:
+    sb = get_supabase()
+    next_day = (
+        datetime.strptime(target, "%Y-%m-%d") + timedelta(days=1)
+    ).strftime("%Y-%m-%d")
+    res = (
+        sb.table("review_logs")
+        .select("id, username, flashcard_id, quality, reviewed_at")
+        .gte("reviewed_at", target)
+        .lt("reviewed_at", next_day)
+        .execute()
+    )
+    return pd.DataFrame(res.data) if res.data else pd.DataFrame(
+        columns=["id", "username", "flashcard_id", "quality", "reviewed_at"]
+    )
+
+
+@st.cache_data(ttl=60)
+def load_flashcards_simple() -> pd.DataFrame:
+    sb = get_supabase()
+    res = (
+        sb.table("flashcards")
+        .select("id, word, meaning, meaning_zh, category, set_id")
+        .execute()
+    )
+    return pd.DataFrame(res.data) if res.data else pd.DataFrame(
+        columns=["id", "word", "meaning", "meaning_zh", "category", "set_id"]
+    )
+
+
+@st.cache_data(ttl=30)
+def load_ta_scores() -> pd.DataFrame:
+    sb = get_supabase()
+    res = (
+        sb.table("ta_scores")
+        .select(
+            "id, username, nickname, set_id, total_score, "
+            "correct_count, total_cards, played_at"
+        )
+        .order("total_score", desc=True)
+        .limit(100)
+        .execute()
+    )
+    return pd.DataFrame(res.data) if res.data else pd.DataFrame(
+        columns=[
+            "id",
+            "username",
+            "nickname",
+            "set_id",
+            "total_score",
+            "correct_count",
+            "total_cards",
+            "played_at",
+        ]
+    )
+
+
+@st.cache_data(ttl=60)
+def load_flashcard_sets() -> pd.DataFrame:
+    sb = get_supabase()
+    res = sb.table("flashcard_sets").select("id, name").execute()
+    return pd.DataFrame(res.data) if res.data else pd.DataFrame(
+        columns=["id", "name"]
+    )
+
+
 def today_str():
     return date.today().isoformat()
 
@@ -675,13 +742,15 @@ if selected_user == ADMIN_OPTION:
             st.session_state.page = PAGE_HOME
             st.rerun()
 
-    tab_dash, tab_content, tab_materials, tab_news, tab5 = st.tabs(
+    tab_dash, tab_content, tab_materials, tab_news, tab5, tab_flash, tab_ranking = st.tabs(
         [
             "📊 生徒の進捗一覧",
             "📎 教材管理",
             "📚 教材マスター",
             "📢 お知らせ管理",
             "📅 イベント一括配布",
+            "📖 単語学習状況",
+            "🏆 タイムアタック",
         ]
     )
 
@@ -928,6 +997,283 @@ if selected_user == ADMIN_OPTION:
                             f"✅ {len(selected_ids)}件のイベントを全生徒に配布しました！"
                         )
                         st.balloons()
+
+    # ==================================================
+    # 📖 単語学習状況タブ
+    # ==================================================
+    with tab_flash:
+        st.subheader("📖 単語学習状況")
+
+        col_date1, col_date2 = st.columns([2, 3])
+        with col_date1:
+            view_mode = st.radio(
+                "表示期間",
+                ["今日", "指定日"],
+                horizontal=True,
+                key="flash_view_mode",
+            )
+        with col_date2:
+            if view_mode == "指定日":
+                target_date = st.date_input(
+                    "日付を選択",
+                    value=date.today(),
+                    key="flash_target_date",
+                )
+            else:
+                target_date = date.today()
+
+        target_date_str = target_date.isoformat()
+        df_logs = load_review_logs_by_date(target_date_str)
+
+        st.caption(f"📅 対象日：{target_date_str}　　取得件数：{len(df_logs)}件")
+
+        if df_logs.empty:
+            st.info(f"{target_date_str} の単語学習記録はありません。")
+        else:
+            df_cards = load_flashcards_simple()
+
+            if not df_cards.empty:
+                df_logs = df_logs.merge(
+                    df_cards[["id", "word", "meaning", "meaning_zh", "category"]],
+                    left_on="flashcard_id",
+                    right_on="id",
+                    how="left",
+                ).drop(columns=["id_y"], errors="ignore").rename(
+                    columns={"id_x": "id"}
+                )
+
+            df_logs["正誤"] = df_logs["quality"].apply(
+                lambda x: "⭕" if int(x) >= 3 else "❌"
+            )
+
+            st.markdown("### 👥 生徒別サマリー")
+
+            summary_rows = []
+            for uname, grp in df_logs.groupby("username"):
+                total = len(grp)
+                correct = (grp["quality"] >= 3).sum()
+                rate = int(correct / total * 100) if total > 0 else 0
+                summary_rows.append({
+                    "生徒名": uname,
+                    "学習枚数": total,
+                    "正解数": int(correct),
+                    "不正解数": int(total - correct),
+                    "正解率": f"{rate}%",
+                })
+
+            df_summary = pd.DataFrame(summary_rows)
+
+            df_u2 = load_users()
+            u2_col = "username" if "username" in df_u2.columns else "ユーザー名"
+            if COL_STREAK in df_u2.columns:
+                streak_map = dict(zip(df_u2[u2_col], df_u2[COL_STREAK]))
+            else:
+                streak_map = {}
+            df_summary["連続日数"] = df_summary["生徒名"].map(
+                lambda x: f"🔥{streak_map.get(x, 0)}日"
+            )
+
+            def highlight_rate(row):
+                rate_val = int(str(row["正解率"]).replace("%", ""))
+                if rate_val >= 80:
+                    return ["background-color: #d4edda"] * len(row)
+                if rate_val >= 50:
+                    return ["background-color: #fff3cd"] * len(row)
+                return ["background-color: #f8d7da"] * len(row)
+
+            st.dataframe(
+                df_summary.style.apply(highlight_rate, axis=1),
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption("🟢 正解率80%以上　🟡 50〜79%　🔴 50%未満")
+
+            st.markdown("---")
+
+            st.markdown("### 🔍 生徒別 単語詳細")
+
+            student_list = sorted(df_logs["username"].unique().tolist())
+            selected_student = st.selectbox(
+                "生徒を選択してください",
+                student_list,
+                key="admin_flash_student_select",
+            )
+
+            df_student = df_logs[df_logs["username"] == selected_student].copy()
+
+            if df_student.empty:
+                st.info(f"{selected_student}さんの記録はありません。")
+            else:
+                df_student["学習時刻"] = (
+                    pd.to_datetime(df_student["reviewed_at"])
+                    .dt.strftime("%H:%M")
+                )
+
+                def get_display_word(row):
+                    cat = str(row.get("category", ""))
+                    if "みんなの日本語" in cat:
+                        zh = str(row.get("meaning_zh", ""))
+                        return str(row.get("word", "")) + (
+                            f"（{zh}）" if zh and zh != "nan" else ""
+                        )
+                    return str(row.get("word", ""))
+
+                def get_display_meaning(row):
+                    cat = str(row.get("category", ""))
+                    if "みんなの日本語" in cat:
+                        return str(row.get("meaning", ""))
+                    return str(row.get("meaning", ""))
+
+                df_student["単語"] = df_student.apply(get_display_word, axis=1)
+                df_student["意味"] = df_student.apply(get_display_meaning, axis=1)
+
+                display_df = df_student[[
+                    "学習時刻", "単語", "意味", "正誤", "quality", "category"
+                ]].rename(columns={
+                    "quality": "スコア(0-5)",
+                    "category": "カテゴリ",
+                }).copy()
+
+                def highlight_correctness(row):
+                    if row["正誤"] == "⭕":
+                        return ["background-color: #d4edda"] * len(row)
+                    return ["background-color: #f8d7da"] * len(row)
+
+                st.dataframe(
+                    display_df.style.apply(highlight_correctness, axis=1),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+                correct_n = (df_student["quality"] >= 3).sum()
+                total_n = len(df_student)
+                ratio = correct_n / total_n if total_n > 0 else 0
+                st.markdown(
+                    f"**{selected_student}さん：{correct_n}/{total_n}枚 正解　"
+                    f"（正解率 {int(ratio * 100)}%）**"
+                )
+                st.progress(ratio)
+
+                df_weak = df_student[df_student["quality"] < 3][
+                    ["単語", "意味", "quality"]
+                ].copy()
+                df_weak = df_weak.rename(columns={"quality": "スコア(0-5)"})
+                if not df_weak.empty:
+                    with st.expander(
+                        f"❌ 不正解だった単語（{len(df_weak)}枚）",
+                        expanded=False,
+                    ):
+                        st.dataframe(
+                            df_weak, use_container_width=True, hide_index=True
+                        )
+
+    # ==================================================
+    # 🏆 タイムアタックランキングタブ
+    # ==================================================
+    with tab_ranking:
+        st.subheader("🏆 タイムアタック ランキング")
+
+        df_ta = load_ta_scores()
+        df_sets = load_flashcard_sets()
+
+        if df_ta.empty:
+            st.info("タイムアタックの記録はまだありません。")
+        else:
+            if not df_sets.empty:
+                set_name_map = dict(zip(df_sets["id"], df_sets["name"]))
+                df_ta["セット名"] = df_ta["set_id"].map(
+                    lambda x: set_name_map.get(x, f"セット{x}")
+                )
+            else:
+                df_ta["セット名"] = df_ta["set_id"].astype(str)
+
+            set_options = ["全セット"] + sorted(df_ta["セット名"].unique().tolist())
+            selected_set = st.selectbox(
+                "セットで絞り込み",
+                set_options,
+                key="admin_ta_set_filter",
+            )
+
+            df_ta_filtered = (
+                df_ta if selected_set == "全セット"
+                else df_ta[df_ta["セット名"] == selected_set]
+            ).copy()
+
+            df_ta_filtered["正解率"] = df_ta_filtered.apply(
+                lambda row: (
+                    f"{int(row['correct_count'] / row['total_cards'] * 100)}%"
+                    if row["total_cards"] > 0
+                    else "0%"
+                ),
+                axis=1,
+            )
+
+            df_ta_filtered["プレイ日時"] = (
+                pd.to_datetime(df_ta_filtered["played_at"])
+                .dt.strftime("%m/%d %H:%M")
+            )
+
+            df_ta_display = df_ta_filtered[[
+                "username", "nickname", "セット名",
+                "total_score", "correct_count", "total_cards",
+                "正解率", "プレイ日時",
+            ]].rename(columns={
+                "username": "ユーザー名",
+                "nickname": "ニックネーム",
+                "total_score": "スコア",
+                "correct_count": "正解数",
+                "total_cards": "出題数",
+            }).reset_index(drop=True)
+
+            df_ta_display.insert(0, "順位", range(1, len(df_ta_display) + 1))
+            df_ta_display["順位"] = df_ta_display["順位"].apply(
+                lambda x: "🥇" if x == 1 else "🥈" if x == 2 else "🥉" if x == 3 else str(x)
+            )
+
+            st.dataframe(df_ta_display, use_container_width=True, hide_index=True)
+
+            st.markdown("---")
+
+            st.markdown("### 📈 生徒別スコア推移")
+
+            ta_students = sorted(df_ta["username"].unique().tolist())
+            selected_ta_student = st.selectbox(
+                "生徒を選択",
+                ta_students,
+                key="admin_ta_student_select",
+            )
+
+            df_ta_student = df_ta[
+                df_ta["username"] == selected_ta_student
+            ].copy().sort_values("played_at")
+
+            if len(df_ta_student) < 2:
+                st.info("スコア推移を表示するには2回以上のプレイ記録が必要です。")
+            else:
+                df_ta_student["日時"] = (
+                    pd.to_datetime(df_ta_student["played_at"])
+                    .dt.strftime("%m/%d %H:%M")
+                )
+                st.line_chart(
+                    df_ta_student.set_index("日時")["total_score"],
+                    use_container_width=True,
+                )
+
+            st.markdown("---")
+
+            st.markdown("### 🏅 全生徒 ベストスコア比較")
+
+            best_scores = (
+                df_ta.groupby("username")["total_score"]
+                .max()
+                .reset_index()
+                .sort_values("total_score", ascending=False)
+                .rename(columns={"username": "生徒名", "total_score": "ベストスコア"})
+            )
+            st.bar_chart(
+                best_scores.set_index("生徒名")["ベストスコア"],
+                use_container_width=True,
+            )
 
     st.stop()
 
