@@ -297,9 +297,13 @@ def load_ta_scores() -> pd.DataFrame:
 @st.cache_data(ttl=60)
 def load_flashcard_sets() -> pd.DataFrame:
     sb = get_supabase()
-    res = sb.table("flashcard_sets").select("id, name").execute()
+    res = (
+        sb.table("flashcard_sets")
+        .select("id, set_name, category, grade")
+        .execute()
+    )
     return pd.DataFrame(res.data) if res.data else pd.DataFrame(
-        columns=["id", "name"]
+        columns=["id", "set_name", "category", "grade"]
     )
 
 
@@ -1106,7 +1110,7 @@ if selected_user == ADMIN_OPTION:
             else:
                 df_student["学習時刻"] = (
                     pd.to_datetime(df_student["reviewed_at"])
-                    .dt.strftime("%H:%M")
+                    .dt.strftime("%m月%d日 %H:%M")
                 )
 
                 def get_display_word(row):
@@ -1180,7 +1184,7 @@ if selected_user == ADMIN_OPTION:
             st.info("タイムアタックの記録はまだありません。")
         else:
             if not df_sets.empty:
-                set_name_map = dict(zip(df_sets["id"], df_sets["name"]))
+                set_name_map = dict(zip(df_sets["id"], df_sets["set_name"]))
                 df_ta["セット名"] = df_ta["set_id"].map(
                     lambda x: set_name_map.get(x, f"セット{x}")
                 )
